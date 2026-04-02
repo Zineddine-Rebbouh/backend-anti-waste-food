@@ -1,0 +1,17 @@
+**/__pycache__
+**/*.pyc
+**/*.pyo
+.git
+.gitignore
+.dockerignore
+*.md
+.venv
+venv
+.tox
+.pytest_cache
+.mypy_cache
+htmlcov
+.coverage
+logs/
+media/
+staticfiles/

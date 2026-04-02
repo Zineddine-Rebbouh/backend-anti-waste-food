@@ -1,0 +1,353 @@
+"""
+Views for the listings app.
+"""
+
+import logging
+import os
+import uuid
+
+from django.core.files.storage import default_storage
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.conf import settings
+from django.db.utils import OperationalError, ProgrammingError
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import filters, permissions, status, viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import NotFound
+from rest_framework.response import Response
+
+from apps.core.pagination import CustomCursorPagination
+from apps.core.permissions import IsVerifiedMerchant
+
+from .filters import ListingFilter
+from .models import Category, Listing
+from .permissions import IsListingOwner
+from .serializers import (
+    CategorySerializer,
+    ListingCreateSerializer,
+    ListingDetailSerializer,
+    ListingListSerializer,
+    ListingPhotoSerializer,
+    ListingUpdateSerializer,
+)
+from .services import ListingService
+
+logger = logging.getLogger(__name__)
+
+
+class CategoryListView(viewsets.ReadOnlyModelViewSet):
+    """
+    List and retrieve food categories.
+    GET /categories/
+    GET /categories/{id}/
+    """
+
+    queryset = Category.objects.filter(is_active=True)
+    serializer_class = CategorySerializer
+    permission_classes = [permissions.AllowAny]
+    pagination_class = None  # Return all categories in one response
+
+
+class ListingViewSet(viewsets.ModelViewSet):
+    """
+    CRUD endpoints for food listings.
+
+    list:     GET  /listings/           – Public; supports filtering & search
+    create:   POST /listings/           – Verified merchants only
+    retrieve: GET  /listings/{id}/      – Public
+    update:   PATCH /listings/{id}/     – Listing owner only
+    destroy:  DELETE /listings/{id}/    – Listing owner only
+    """
+
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_class = ListingFilter
+    search_fields = ["title", "description", "merchant__merchant_profile__business_name"]
+    ordering_fields = ["discounted_price", "created_at", "pickup_start", "quantity_available"]
+    ordering = ["-created_at"]
+    pagination_class = CustomCursorPagination
+    lookup_field = "id"
+    lookup_value_regex = "[0-9a-fA-F-]{32,36}"
+
+    def get_queryset(self):
+        user = self.request.user
+
+        base = Listing.objects.select_related(
+            "merchant",
+            "merchant__merchant_profile",
+            "category",
+        ).prefetch_related("photos")
+
+        # Owners see all their own listings; everyone else sees only active ones
+        if self.action in ["update", "partial_update", "destroy", "photos", "my_listings"]:
+            if user.is_authenticated and user.is_merchant:
+                return base.filter(merchant=user)
+        if self.action == "retrieve":
+            return base
+
+        return base.filter(status="active")
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        request = self.request
+        user = request.user
+        if user.is_authenticated and user.is_consumer:
+            from apps.users.models import FavoriteListing
+
+            try:
+                favorite_ids = set(
+                    FavoriteListing.objects.filter(user=user).values_list(
+                        "listing_id", flat=True
+                    )
+                )
+            except (ProgrammingError, OperationalError):
+                # Keep listing feeds available even if favorites migrations are not yet applied.
+                favorite_ids = set()
+            context["favorite_ids"] = {str(v) for v in favorite_ids}
+        return context
+
+    def get_object(self):
+        try:
+            return super().get_object()
+        except (ValueError, DjangoValidationError):
+            raise NotFound("Listing not found.")
+
+    def get_serializer_class(self):
+        if self.action == "create":
+            return ListingCreateSerializer
+        if self.action in ["update", "partial_update"]:
+            return ListingUpdateSerializer
+        if self.action == "retrieve":
+            return ListingDetailSerializer
+        return ListingListSerializer
+
+    def get_permissions(self):
+        if self.action == "create":
+            return [permissions.IsAuthenticated(), IsVerifiedMerchant()]
+        if self.action in ["update", "partial_update", "destroy"]:
+            return [permissions.IsAuthenticated(), IsListingOwner()]
+        return [permissions.AllowAny()]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        instance = self.perform_create(serializer)
+        detail = ListingDetailSerializer(instance, context={'request': request})
+        return Response(detail.data, status=status.HTTP_201_CREATED)
+
+    def perform_create(self, serializer):
+        return serializer.save()
+
+    def perform_update(self, serializer):
+        listing = self.get_object()
+        ListingService.update_listing(listing, serializer.validated_data)
+
+    # ── Custom actions ────────────────────────────────────────────────────────
+
+    @action(detail=False, methods=["get"], url_path="my-listings",
+            permission_classes=[permissions.IsAuthenticated, IsVerifiedMerchant])
+    def my_listings(self, request):
+        """
+        GET /listings/my-listings/
+        Returns ALL listings owned by the authenticated merchant, regardless of status.
+        Supports ?status= filter.
+        """
+        qs = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(qs)
+        serializer = ListingDetailSerializer(
+            page if page is not None else qs, many=True
+        )
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["get", "post", "delete"], url_path="photos")
+    def photos(self, request, pk=None):
+        """
+        GET  /listings/{id}/photos/        – List photos
+        POST /listings/{id}/photos/        – Add photo (owner only)
+        DELETE /listings/{id}/photos/{photo_id}/ is handled separately
+        """
+        listing = self.get_object()
+        self.check_object_permissions(request, listing)
+
+        if request.method == "GET":
+            serializer = ListingPhotoSerializer(listing.photos.all(), many=True)
+            return Response(serializer.data)
+
+        if request.method == "POST":
+            is_primary = request.data.get("is_primary", True)
+
+            # Accept either a direct file upload or a URL string.
+            uploaded_file = request.FILES.get("photo")
+            if uploaded_file:
+                ext = os.path.splitext(uploaded_file.name)[1].lower() or ".jpg"
+                filename = f"listings/photos/{uuid.uuid4().hex}{ext}"
+                saved_path = default_storage.save(filename, uploaded_file)
+                photo_url = request.build_absolute_uri(
+                    settings.MEDIA_URL + saved_path
+                )
+            else:
+                photo_url = request.data.get("photo_url")
+
+            if not photo_url:
+                return Response(
+                    {"error": {"code": "validation_error", "message": "photo or photo_url is required."}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            photo = ListingService.add_photo(listing, photo_url, is_primary)
+            return Response(
+                ListingPhotoSerializer(photo).data, status=status.HTTP_201_CREATED
+            )
+
+        return Response(status=status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    @action(detail=True, methods=["post"], url_path="mark-as-donation")
+    def mark_as_donation(self, request, pk=None):
+        """
+        POST /listings/{id}/mark-as-donation/
+        Convert a listing to a donation and create a Donation record visible
+        to nearby charities.  Verified merchants only.
+        """
+        listing = self.get_object()
+        self.check_object_permissions(request, listing)
+
+        if listing.is_donation:
+            return Response(
+                {"error": {"code": "conflict", "message": "Listing is already marked as a donation."}},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        # Create the Donation record (which also sets listing.is_donation = True
+        # and notifies nearby charities).
+        try:
+            from apps.donations.services import DonationService
+
+            DonationService.create_donation(listing, request.user)
+        except (PermissionError, ValueError) as exc:
+            return Response(
+                {"error": {"code": "conflict", "message": str(exc)}},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        listing.refresh_from_db()
+        return Response(ListingDetailSerializer(listing).data)
+
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="map",
+        permission_classes=[permissions.AllowAny],
+    )
+    def map(self, request):
+        """
+        GET /listings/map/?ne_lat=&ne_lng=&sw_lat=&sw_lng=
+
+        Returns active listings within the visible map bounding box.
+        Returns minimal data for map pin rendering only.
+        Optional filters: category, freshness_grade.
+        Limited to 200 results to prevent overload.
+        """
+        try:
+            ne_lat = float(request.query_params["ne_lat"])
+            ne_lng = float(request.query_params["ne_lng"])
+            sw_lat = float(request.query_params["sw_lat"])
+            sw_lng = float(request.query_params["sw_lng"])
+        except (KeyError, ValueError, TypeError):
+            return Response(
+                {
+                    "error": {
+                        "code": "validation_error",
+                        "message": "ne_lat, ne_lng, sw_lat, and sw_lng are required decimal parameters.",
+                    }
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Basic sanity check: northeast must be north of southwest
+        if ne_lat <= sw_lat or ne_lng <= sw_lng:
+            return Response(
+                {
+                    "error": {
+                        "code": "validation_error",
+                        "message": "ne_lat/ne_lng must be greater than sw_lat/sw_lng.",
+                    }
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Limit bounding box size to 200 km diagonal to prevent full-country queries
+        from math import sqrt
+        diagonal_deg = sqrt((ne_lat - sw_lat) ** 2 + (ne_lng - sw_lng) ** 2)
+        if diagonal_deg > 4.0:  # ~4 degrees ≈ ~400 km diagonal
+            return Response(
+                {
+                    "error": {
+                        "code": "bounds_too_large",
+                        "message": "Map bounds are too large. Zoom in to see listings.",
+                    }
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from django.contrib.gis.geos import Polygon
+
+        bbox = Polygon.from_bbox((sw_lng, sw_lat, ne_lng, ne_lat))
+        bbox.srid = 4326
+
+        qs = (
+            Listing.objects
+            .active()
+            .filter(merchant__merchant_profile__location__within=bbox)
+            .select_related("merchant", "merchant__merchant_profile", "category")
+            .prefetch_related("photos")
+        )
+
+        # Optional category / freshness filters
+        category_slug = request.query_params.get("category")
+        if category_slug:
+            qs = qs.filter(category__slug=category_slug)
+        freshness_grade = request.query_params.get("freshness_grade")
+        if freshness_grade:
+            qs = qs.filter(freshness_grade=freshness_grade)
+
+        qs = qs.order_by("freshness_grade", "-created_at")[:200]
+
+        results = []
+        for listing in qs:
+            merchant_profile = getattr(listing.merchant, "merchant_profile", None)
+            lat = float(merchant_profile.latitude) if merchant_profile and merchant_profile.latitude else None
+            lng = float(merchant_profile.longitude) if merchant_profile and merchant_profile.longitude else None
+            if lat is None or lng is None:
+                continue
+            results.append(
+                {
+                    "id": str(listing.id),
+                    "title": listing.title,
+                    "freshness_grade": listing.freshness_grade,
+                    "original_price": str(listing.original_price),
+                    "discounted_price": str(listing.discounted_price),
+                    "discount_percentage": listing.discount_percentage,
+                    "quantity_available": listing.quantity_available,
+                    "primary_photo_url": listing.primary_photo_url,
+                    "category_name": listing.category.name if listing.category else "",
+                    "latitude": lat,
+                    "longitude": lng,
+                    "merchant_name": merchant_profile.business_name if merchant_profile else "",
+                    "merchant_id": str(listing.merchant_id),
+                    "pickup_start": listing.pickup_start,
+                    "pickup_end": listing.pickup_end,
+                    "is_donation": listing.is_donation,
+                    "created_at": listing.created_at,
+                }
+            )
+
+        return Response(
+            {
+                "count": len(results),
+                "bounds": {
+                    "northeast": {"latitude": ne_lat, "longitude": ne_lng},
+                    "southwest": {"latitude": sw_lat, "longitude": sw_lng},
+                },
+                "listings": results,
+            }
+        )

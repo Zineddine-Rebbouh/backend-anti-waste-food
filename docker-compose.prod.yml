@@ -1,0 +1,129 @@
+version: "3.9"
+
+# ==============================================
+# SaveFood DZ - Production Docker Compose
+# ==============================================
+
+services:
+  # ── Nginx (Reverse Proxy) ────────────────────
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: savefood_nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - static_data:/app/staticfiles:ro
+      - certbot_certs:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot:ro
+    depends_on:
+      - web
+
+  # ── Django Application ───────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    image: savefood-backend:${IMAGE_TAG:-latest}
+    container_name: savefood_web
+    restart: always
+    env_file:
+      - .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
+    volumes:
+      - static_data:/app/staticfiles
+    depends_on:
+      - redis
+    deploy:
+      replicas: 2
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/')",
+        ]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+
+  # ── Redis ────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: savefood_redis
+    restart: always
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Celery Worker ────────────────────────────
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    image: savefood-backend:${IMAGE_TAG:-latest}
+    container_name: savefood_celery_worker
+    restart: always
+    command: celery -A config worker -l WARNING -c 4 -Q default,high_priority,low_priority
+    env_file:
+      - .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
+    depends_on:
+      - redis
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: on-failure
+
+  # ── Celery Beat ──────────────────────────────
+  celery_beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    image: savefood-backend:${IMAGE_TAG:-latest}
+    container_name: savefood_celery_beat
+    restart: always
+    command: celery -A config beat -l WARNING --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    env_file:
+      - .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
+    depends_on:
+      - redis
+
+volumes:
+  redis_data:
+  static_data:
+  certbot_certs:
+  certbot_www:
+
+networks:
+  default:
+    name: savefood_prod_network
