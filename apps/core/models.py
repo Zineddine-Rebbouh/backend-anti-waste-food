@@ -59,3 +59,31 @@ class SoftDeleteModel(TimeStampedModel):
         self.is_deleted = False
         self.deleted_at = None
         self.save(update_fields=["is_deleted", "deleted_at", "updated_at"])
+
+
+class Wilaya(models.Model):
+    """
+    Static reference table for Algeria's 48 administrative wilayas.
+
+    Populated once via data migration and never changes.
+    Used by the proximity-based listing feed to scope results to the
+    consumer's wilaya and detect bordering wilayas.
+    """
+
+    code = models.PositiveSmallIntegerField(
+        primary_key=True,
+        help_text="Official Algerian wilaya code (1–48)",
+    )
+    name_fr = models.CharField(max_length=100, help_text="French name, e.g. Constantine")
+    name_ar = models.CharField(max_length=100, blank=True, help_text="Arabic name")
+    name_en = models.CharField(max_length=100, blank=True, help_text="English name (optional)")
+    center_lat = models.FloatField(help_text="Latitude of the wilaya's geographic center")
+    center_lng = models.FloatField(help_text="Longitude of the wilaya's geographic center")
+
+    class Meta:
+        verbose_name = "wilaya"
+        verbose_name_plural = "wilayas"
+        ordering = ["code"]
+
+    def __str__(self):
+        return f"{self.code} – {self.name_fr}"

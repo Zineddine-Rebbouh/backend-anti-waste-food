@@ -70,7 +70,7 @@ The active settings module is controlled by the `DJANGO_SETTINGS_MODULE` environ
 Flutter Mobile App
        │  HTTPS + JWT Bearer token
        ▼
-  [Nginx / dev: runserver]  ← port 80/443 (prod) or 8000 (dev)
+  [Nginx / dev: runserver]  ← port 80/443 (prod) or 8080 (dev)
        │
   Django REST API  /api/v1/*
        │
@@ -389,13 +389,13 @@ Handled by the `analytics` app. Merchant and Admin roles only.
 
 #### `/admin/` — Django Admin Interface
 
-Browser-based admin panel for staff and superusers. Not a REST API — it is server-rendered HTML. Accessed at `http://localhost:8000/admin/` in development.
+Browser-based admin panel for staff and superusers. Not a REST API — it is server-rendered HTML. Accessed at `http://localhost:8080/admin/` in development.
 
 ---
 
 #### `/api/docs/` — Interactive API Documentation
 
-Swagger UI auto-generated from the codebase. Available at `http://localhost:8000/api/docs/` in development. Also accessible as ReDoc at `/api/redoc/` and as raw OpenAPI schema JSON at `/api/schema/`.
+Swagger UI auto-generated from the codebase. Available at `http://localhost:8080/api/docs/` in development. Also accessible as ReDoc at `/api/redoc/` and as raw OpenAPI schema JSON at `/api/schema/`.
 
 ---
 
@@ -425,7 +425,7 @@ When `USE_S3=False` (the default for development), Django uses `FileSystemStorag
 Django serves these files directly when `DEBUG=True` via the URL prefix `/media/`. The `docker-compose.yml` mounts a Docker volume `media_data` at the container path so files persist across restarts.
 
 **Development storage path:** `media/listings/`, `media/merchants/`, `media/charities/`
-**Development media URL:** `http://localhost:8000/media/<path>`
+**Development media URL:** `http://localhost:8080/media/<path>`
 
 This approach is simple but not suitable for production because:
 
@@ -541,9 +541,9 @@ This populates the database with sample merchants, listings, and users for devel
 
 | URL                               | What to expect                |
 | --------------------------------- | ----------------------------- |
-| `http://localhost:8000/health/`   | `{"status": "ok"}`            |
-| `http://localhost:8000/admin/`    | Django Admin login page       |
-| `http://localhost:8000/api/docs/` | Swagger UI with all endpoints |
+| `http://localhost:8080/health/`   | `{"status": "ok"}`            |
+| `http://localhost:8080/admin/`    | Django Admin login page       |
+| `http://localhost:8080/api/docs/` | Swagger UI with all endpoints |
 | `http://localhost:9001/`          | MinIO browser console         |
 | `http://localhost:5555/`          | Flower — Celery task monitor  |
 
@@ -644,10 +644,10 @@ poetry run celery -A config.celery beat -l info --scheduler django_celery_beat.s
 **Step 10 — Start the Django development server**
 
 ```bash
-poetry run python manage.py runserver 0.0.0.0:8000
+poetry run python manage.py runserver 0.0.0.0:8080
 ```
 
-The API will be available at `http://localhost:8000/api/v1/`.
+The API will be available at `http://localhost:8080/api/v1/`.
 
 ---
 
@@ -675,9 +675,9 @@ The Flutter app needs a configurable base URL that points to the running API.
 
 | Environment                                | Base URL                         |
 | ------------------------------------------ | -------------------------------- |
-| Local development (device on same network) | `http://192.168.x.x:8000/api/v1` |
-| Local development (Android emulator)       | `http://10.0.2.2:8000/api/v1`    |
-| Local development (iOS simulator)          | `http://127.0.0.1:8000/api/v1`   |
+| Local development (device on same network) | `http://192.168.x.x:8080/api/v1` |
+| Local development (Android emulator)       | `http://10.0.2.2:8080/api/v1`    |
+| Local development (iOS simulator)          | `http://127.0.0.1:8080/api/v1`   |
 | Production                                 | `https://api.savefood.dz/api/v1` |
 
 Define this as a constant or environment configuration in the Flutter app so it can be switched without modifying business logic.
@@ -797,7 +797,7 @@ Define a configuration class that reads from compile-time environment variables 
 abstract final class ApiConfig {
   static const String baseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://10.0.2.2:8000/api/v1',
+    defaultValue: 'http://10.0.2.2:8080/api/v1',
   );
 }
 ```
@@ -842,7 +842,7 @@ The SaveFood DZ admin interface has two layers:
 
 | Detail         | Value                                                                          |
 | -------------- | ------------------------------------------------------------------------------ |
-| URL            | `http://localhost:8000/admin/` (dev) / `https://api.savefood.dz/admin/` (prod) |
+| URL            | `http://localhost:8080/admin/` (dev) / `https://api.savefood.dz/admin/` (prod) |
 | Authentication | Session-based (username + password form login, **not** JWT)                    |
 | Required role  | Staff (`is_staff=True`) or Superuser (`is_superuser=True`)                     |
 

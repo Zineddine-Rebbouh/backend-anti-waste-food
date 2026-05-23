@@ -17,11 +17,12 @@ def auto_cancel_expired_orders():
     """
     from django.utils import timezone
 
+    from .constants import ORDER_STATUS_ACCEPTED
     from .models import Order
     from .services import OrderService
 
     expired_orders = Order.objects.filter(
-        order_status="reserved",
+        order_status=ORDER_STATUS_ACCEPTED,
         listing__pickup_end__lt=timezone.now(),
     ).select_related("consumer", "merchant", "listing")
 
@@ -70,7 +71,7 @@ def send_pickup_reminder(self, order_id: str):
 
     try:
         order = Order.objects.select_related("consumer", "listing").get(
-            id=order_id, order_status="reserved"
+            id=order_id, order_status__in=["accepted", "active"]
         )
     except Order.DoesNotExist:
         logger.warning(f"send_pickup_reminder: Order {order_id} not found or not reserved")

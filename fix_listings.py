@@ -3,7 +3,7 @@ import django
 import sys
 
 # Setup Django environment
-sys.path.append(r"c:\Users\mkrym\OneDrive\Documents\My Folders\Final Graduation Project\App\backend")
+sys.path.append(r"c:\Users\mkrym\OneDrive\Documents\My Folders\My Profile\hl\backend")
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings.base')
 
 try:

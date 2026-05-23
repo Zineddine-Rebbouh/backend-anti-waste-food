@@ -71,6 +71,19 @@ class OrderDetailSerializer(serializers.ModelSerializer):
     merchant_address = serializers.CharField(
         source="merchant.merchant_profile.address", read_only=True, default=""
     )
+    merchant_latitude = serializers.DecimalField(
+        source="merchant.merchant_profile.latitude",
+        max_digits=10, decimal_places=7,
+        read_only=True, default=None,
+    )
+    merchant_longitude = serializers.DecimalField(
+        source="merchant.merchant_profile.longitude",
+        max_digits=10, decimal_places=7,
+        read_only=True, default=None,
+    )
+    merchant_logo_url = serializers.CharField(
+        source="merchant.merchant_profile.logo_url", read_only=True, default=""
+    )
     # Consumer details — exposed to the merchant (and consumer themselves) only.
     consumer_name = serializers.SerializerMethodField()
     consumer_phone = serializers.SerializerMethodField()
@@ -85,6 +98,9 @@ class OrderDetailSerializer(serializers.ModelSerializer):
             "merchant_name",
             "merchant_phone",
             "merchant_address",
+            "merchant_latitude",
+            "merchant_longitude",
+            "merchant_logo_url",
             "consumer_name",
             "consumer_phone",
             "consumer_eco_score",
@@ -165,3 +181,52 @@ class OrderFulfillByCodeSerializer(serializers.Serializer):
     """Input for manual fulfilment by pickup code (fallback when QR scan fails)."""
 
     pickup_code = serializers.CharField(max_length=20)
+
+
+# ── Route Planning ───────────────────────────────────────────────────────────
+
+
+class RoutePlanRequestSerializer(serializers.Serializer):
+    """Input for the route planning endpoint."""
+
+    user_latitude = serializers.FloatField(min_value=-90, max_value=90)
+    user_longitude = serializers.FloatField(min_value=-180, max_value=180)
+    order_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        min_length=1,
+        max_length=20,
+        help_text="List of active order UUIDs to include in the route.",
+    )
+
+
+class RoutePlanStopSerializer(serializers.Serializer):
+    """A single stop in the computed route."""
+
+    order = serializers.IntegerField()
+    order_id = serializers.CharField()
+    merchant_name = serializers.CharField()
+    merchant_address = serializers.CharField()
+    latitude = serializers.FloatField()
+    longitude = serializers.FloatField()
+    distance_from_previous_km = serializers.FloatField()
+    pickup_start = serializers.DateTimeField(allow_null=True)
+    pickup_end = serializers.DateTimeField(allow_null=True)
+    listing_title = serializers.CharField()
+    listing_photo = serializers.CharField(allow_blank=True)
+    warning = serializers.CharField(allow_null=True)
+
+
+class RoutePlanResponseSerializer(serializers.Serializer):
+    """Full route plan response."""
+
+    total_stops = serializers.IntegerField()
+    total_distance_km = serializers.FloatField()
+    estimated_duration_minutes = serializers.IntegerField()
+    stops = RoutePlanStopSerializer(many=True)
+    warnings = serializers.ListField(child=serializers.CharField())
+    path = serializers.ListField(
+        child=serializers.ListField(child=serializers.FloatField()),
+        required=False,
+        default=list,
+        help_text="Optimized road-following path coordinates: [[lat, lng], ...]",
+    )

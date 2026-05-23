@@ -10,7 +10,6 @@ from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
 
-from apps.core.constants import ECO_SCORE_NO_SHOW, ECO_SCORE_ORDER_CANCEL
 from apps.core.exceptions import (
     InsufficientQuantityError,
     InvalidQRCodeError,
@@ -21,18 +20,18 @@ from apps.core.exceptions import (
 )
 from apps.core.utils import generate_qr_hash, verify_qr_hash
 
-from .constants import (
+from ..constants import (
     CANCELLED_BY_CONSUMER,
     CANCELLED_BY_MERCHANT,
     CANCELLED_BY_SYSTEM,
-    CANCELLATION_WINDOW_MINUTES,
     ORDER_STATUS_CANCELLED,
     ORDER_STATUS_COLLECTED,
     ORDER_STATUS_NO_SHOW,
-    ORDER_STATUS_RESERVED,
+    ORDER_STATUS_PENDING,
+    ORDER_STATUS_ACCEPTED,
     QR_VALIDITY_MINUTES,
 )
-from .state_machine import OrderStateMachine
+from ..state_machine import OrderStateMachine
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +65,7 @@ class OrderService:
         """
         from apps.listings.models import Listing
 
-        from .models import Order
+        from ..models import Order
 
         # Lock the listing row to prevent race conditions
         listing = Listing.objects.select_for_update().get(id=listing_id)
@@ -111,7 +110,7 @@ class OrderService:
             unit_price=unit_price,
             total_price=total_price,
             currency=listing.currency,
-            order_status=ORDER_STATUS_RESERVED,
+            order_status=ORDER_STATUS_PENDING,
             payment_method=payment_method,
             qr_hash=qr_hash,
             qr_expires_at=qr_expires_at,
@@ -146,6 +145,26 @@ class OrderService:
 
     @staticmethod
     @transaction.atomic
+    def accept_order(order, merchant_user):
+        """
+        Merchant accepts a pending order. It becomes accepted and active.
+        """
+        from ..models import Order
+        order = Order.objects.select_for_update().get(pk=order.pk)
+        
+        if order.merchant != merchant_user and not merchant_user.is_staff:
+            raise PermissionError("Only the order's merchant can accept it.")
+            
+        from ..state_machine import OrderStateMachine
+        from ..constants import ORDER_STATUS_ACCEPTED
+        OrderStateMachine.transition(order, ORDER_STATUS_ACCEPTED)
+        order.save()
+        
+        logger.info("Order accepted and active", extra={"order_id": str(order.id)})
+        return order
+
+    @staticmethod
+    @transaction.atomic
     def fulfill_order(order, qr_hash_provided: str, merchant_user):
         """
         Mark an order as collected after QR code verification.
@@ -158,7 +177,7 @@ class OrderService:
         Returns:
             Order: The updated order.
         """
-        from .models import Order
+        from ..models import Order
 
         # Re-fetch with row-level lock to prevent race conditions
         order = Order.objects.select_for_update().get(pk=order.pk)
@@ -169,7 +188,7 @@ class OrderService:
         if order.order_status == ORDER_STATUS_COLLECTED:
             raise OrderAlreadyFulfilledError()
 
-        if order.order_status != ORDER_STATUS_RESERVED:
+        if order.order_status != ORDER_STATUS_ACCEPTED:
             raise OrderCancellationNotAllowedError(
                 f"Cannot fulfil an order with status '{order.order_status}'."
             )
@@ -188,9 +207,11 @@ class OrderService:
         OrderStateMachine.transition(order, ORDER_STATUS_COLLECTED)
         order.save()
 
-        # Update consumer stats
+        # Update consumer stats & Eco Score
         try:
             order.consumer.consumer_profile.record_order_completion()
+            from apps.users.eco_score_engine import record_pickup_completion
+            record_pickup_completion(order)
         except Exception:
             pass
 
@@ -228,17 +249,7 @@ class OrderService:
                 f"Order with status '{order.order_status}' cannot be cancelled."
             )
 
-        # Consumer has a time window
         if cancelled_by_user == order.consumer:
-            from datetime import timedelta
-
-            cutoff = order.listing.pickup_start - timedelta(minutes=CANCELLATION_WINDOW_MINUTES)
-            if timezone.now() > cutoff:
-                raise OrderCancellationNotAllowedError(
-                    "The cancellation window has closed. "
-                    f"Orders must be cancelled at least {CANCELLATION_WINDOW_MINUTES} "
-                    "minutes before pickup."
-                )
             cancelled_by_str = CANCELLED_BY_CONSUMER
         elif cancelled_by_user == order.merchant:
             cancelled_by_str = CANCELLED_BY_MERCHANT
@@ -264,9 +275,12 @@ class OrderService:
         # Un-sold-out if applicable
         Listing.objects.filter(pk=order.listing_id, status="sold_out").update(status="active")
 
-        # Update consumer eco_score
+        # Update consumer stats & Eco Score
         try:
             order.consumer.consumer_profile.record_order_cancellation()
+            if cancelled_by_user == order.consumer:
+                from apps.users.eco_score_engine import record_cancellation
+                record_cancellation(order, timezone.now())
         except Exception:
             pass
 
@@ -303,9 +317,11 @@ class OrderService:
             quantity_available=Ff("quantity_available") + order.quantity
         )
 
-        # Penalise consumer eco_score
+        # Penalise consumer stats & Eco Score
         try:
             order.consumer.consumer_profile.record_no_show()
+            from apps.users.eco_score_engine import record_no_show
+            record_no_show(order)
         except Exception:
             pass
 
@@ -331,20 +347,22 @@ class OrderService:
         Raises:
             Order.DoesNotExist: No matching reserved order for this merchant.
         """
-        from .models import Order
+        from ..models import Order
 
         order = Order.objects.select_for_update().get(
             pickup_code=pickup_code.upper(),
             merchant=merchant_user,
-            order_status=ORDER_STATUS_RESERVED,
+            order_status=ORDER_STATUS_ACCEPTED,
         )
 
         OrderStateMachine.transition(order, ORDER_STATUS_COLLECTED)
         order.save()
 
-        # Update consumer stats
+        # Update consumer stats & Eco Score
         try:
             order.consumer.consumer_profile.record_order_completion()
+            from apps.users.eco_score_engine import record_pickup_completion
+            record_pickup_completion(order)
         except Exception:
             pass
 
@@ -365,4 +383,3 @@ class OrderService:
             extra={"order_id": str(order.id), "pickup_code": pickup_code},
         )
         return order
-

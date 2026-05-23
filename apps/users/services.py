@@ -293,3 +293,111 @@ class UserService:
             admin_user.email,
         )
         return charity
+
+    @staticmethod
+    @transaction.atomic
+    def request_profile_update(user: User, changes: dict, documents: list) -> "ProfileUpdateRequest":
+        """
+        Create a new profile update request for a merchant or charity.
+        """
+        from .models import ProfileUpdateRequest, ProfileUpdateDocument
+
+        profile = user.profile
+        if not profile:
+            raise ValueError("User does not have a profile to update.")
+
+        # Prepare change log with old values
+        processed_changes = {}
+        for field, new_value in changes.items():
+            if hasattr(profile, field):
+                old_value = getattr(profile, field)
+                processed_changes[field] = {
+                    "old": old_value,
+                    "new": new_value
+                }
+            elif hasattr(user, field):
+                old_value = getattr(user, field)
+                processed_changes[field] = {
+                    "old": old_value,
+                    "new": new_value
+                }
+
+        request = ProfileUpdateRequest.objects.create(
+            user=user,
+            changes=processed_changes
+        )
+
+        for doc in documents:
+            ProfileUpdateDocument.objects.create(
+                request=request,
+                document_type=doc.get("document_type", "other"),
+                file_url=doc.get("file_url"),
+                file_name=doc.get("file_name", "unnamed_document")
+            )
+
+        logger.info("Profile update request %s created for %s", request.id, user.email)
+        return request
+
+    @staticmethod
+    @transaction.atomic
+    def approve_profile_update(update_request: "ProfileUpdateRequest", admin_user: User) -> None:
+        """
+        Approve the request and apply changes to the user's profile.
+        """
+        from .models import PROFILE_UPDATE_STATUS_APPROVED
+        from apps.notifications.services import NotificationService
+
+        user = update_request.user
+        profile = user.profile
+        
+        # Apply changes
+        for field, values in update_request.changes.items():
+            new_value = values["new"]
+            if hasattr(profile, field):
+                setattr(profile, field, new_value)
+            elif hasattr(user, field):
+                setattr(user, field, new_value)
+
+        # Save changes
+        user.save()
+        if profile:
+            profile.save()
+
+        # Update request status
+        update_request.status = PROFILE_UPDATE_STATUS_APPROVED
+        update_request.processed_at = timezone.now()
+        update_request.processed_by = admin_user
+        update_request.save()
+
+        # Notify user
+        NotificationService.notify_profile_update_processed(
+            user, 
+            status="approved", 
+            admin_note=update_request.admin_note
+        )
+
+        logger.info("Profile update request %s approved by %s", update_request.id, admin_user.email)
+
+    @staticmethod
+    @transaction.atomic
+    def reject_profile_update(update_request: "ProfileUpdateRequest", admin_user: User, admin_note: str) -> None:
+        """
+        Reject the request and notify the user.
+        """
+        from .models import PROFILE_UPDATE_STATUS_REJECTED
+        from apps.notifications.services import NotificationService
+
+        update_request.status = PROFILE_UPDATE_STATUS_REJECTED
+        update_request.admin_note = admin_note
+        update_request.processed_at = timezone.now()
+        update_request.processed_by = admin_user
+        update_request.save()
+
+        # Notify user
+        NotificationService.notify_profile_update_processed(
+            update_request.user, 
+            status="rejected", 
+            admin_note=admin_note
+        )
+
+        logger.info("Profile update request %s rejected by %s", update_request.id, admin_user.email)

@@ -9,8 +9,9 @@ class ListingQuerySet(models.QuerySet):
     """Chainable queryset methods for common listing queries."""
 
     def active(self):
-        """Listings that are publicly visible and available for order."""
-        return self.filter(status="active")
+        """Listings that are publicly visible, available for order, and pickup window has not passed."""
+        from django.utils import timezone
+        return self.filter(status="active", pickup_end__gt=timezone.now())
 
     def available(self):
         """Active listings that still have quantity."""

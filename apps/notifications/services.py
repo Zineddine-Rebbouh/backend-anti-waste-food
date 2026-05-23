@@ -173,3 +173,20 @@ class NotificationService:
             data={},
             channels=["in_app", "email"],
         )
+
+    @staticmethod
+    def notify_profile_update_processed(user, status: str, admin_note: str = ""):
+        title = "Profile Update Approved" if status == "approved" else "Profile Update Rejected"
+        status_text = "approved" if status == "approved" else "rejected"
+        body = f"Your request to update your profile has been {status_text}."
+        if admin_note:
+            body += f" Admin note: {admin_note}"
+            
+        NotificationService.create_and_send(
+            recipient_user=user,
+            notification_type="profile_update_processed",
+            title=title,
+            body=body,
+            data={"status": status},
+            channels=["in_app", "email"],
+        )

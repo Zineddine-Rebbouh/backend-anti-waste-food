@@ -10,6 +10,7 @@ from django.contrib.auth import get_user_model
 from django.core.files.storage import default_storage
 from django.db.models import Q
 from rest_framework import filters, status
+from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.generics import (
     CreateAPIView,
@@ -27,7 +28,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from apps.core.pagination import AdminPageNumberPagination
 
-from .models import Charity, FavoriteListing, Merchant, UserAddress
+from .models import Charity, FavoriteListing, Merchant, UserAddress, ProfileUpdateRequest
 from .serializers import (
     ChangePasswordSerializer,
     CharityVerificationSerializer,
@@ -42,6 +43,9 @@ from .serializers import (
     UserAddressSerializer,
     UserDetailSerializer,
     UserRegistrationSerializer,
+    ProfileUpdateRequestSerializer,
+    ProfileUpdateRequestCreateSerializer,
+    ProfileUpdateRequestProcessSerializer,
 )
 from .services import UserService
 
@@ -234,6 +238,28 @@ class MerchantViewSet(ReadOnlyModelViewSet):
         if business_type:
             qs = qs.filter(business_type=business_type)
         return qs
+
+    @action(detail=True, methods=["get"], url_path="listings")
+    def listings(self, request, pk=None):
+        """
+        GET /api/v1/merchants/{id}/listings/
+        Returns active listings for this specific merchant.
+        """
+        merchant = self.get_object()
+        from apps.listings.models import Listing
+        from apps.listings.serializers import ListingListSerializer
+        from django.utils import timezone
+
+        qs = Listing.objects.filter(
+            merchant=merchant.user,
+            status="active",
+            is_donation=False,
+            pickup_end__gt=timezone.now()
+        ).select_related("category").prefetch_related("photos")
+
+        # Reuse common context for distance and favorites
+        serializer = ListingListSerializer(qs, many=True, context=self.get_serializer_context())
+        return Response(serializer.data)
 
 
 class MerchantVerificationView(APIView):
@@ -837,3 +863,275 @@ class CharityServiceAreaView(APIView):
                 "updated_at": charity.updated_at,
             }
         )
+
+
+# ── Eco Score ─────────────────────────────────────────────────────────────────
+
+class UserEcoScoreView(APIView):
+    """
+    GET /api/v1/users/me/eco-score/
+    Returns the current user's Eco Score details, tier, and privileges.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        profile = request.user.profile
+        if not profile:
+            return Response({"error": "Profile not found."}, status=404)
+
+        score = getattr(profile, "eco_score", 0)
+        tier = getattr(profile, "eco_tier", "suspended")
+        
+        from apps.core.constants import ECO_SCORE_TIERS
+        tier_data = ECO_SCORE_TIERS.get(tier, ECO_SCORE_TIERS["suspended"])
+        
+        # Calculate next tier
+        next_tier = None
+        for t, data in ECO_SCORE_TIERS.items():
+            if data["min"] > score:
+                if not next_tier or data["min"] < next_tier["score_needed"]:
+                    next_tier = {
+                        "name": t.replace("_", " ").title(),
+                        "score_needed": data["min"],
+                        "points_away": data["min"] - score
+                    }
+
+        # Calculate privileges based on tier
+        privileges = {}
+        if request.user.is_consumer:
+            if tier == "exemplary":
+                privileges = {"max_simultaneous_reservations": 5, "can_request_charity_listings": True, "priority_access": True}
+            elif tier == "reliable":
+                privileges = {"max_simultaneous_reservations": 3, "can_request_charity_listings": True, "priority_access": False}
+            elif tier == "developing":
+                privileges = {"max_simultaneous_reservations": 2, "can_request_charity_listings": False, "priority_access": False}
+            elif tier == "at_risk":
+                privileges = {"max_simultaneous_reservations": 1, "can_request_charity_listings": False, "priority_access": False}
+            else:
+                privileges = {"max_simultaneous_reservations": 0, "can_request_charity_listings": False, "priority_access": False}
+
+        # Calculate change this week
+        from django.utils import timezone
+        one_week_ago = timezone.now() - timezone.timedelta(days=7)
+        from .models import EcoScoreEvent
+        from django.db.models import Sum
+        change = EcoScoreEvent.objects.filter(user=request.user, created_at__gte=one_week_ago).aggregate(Sum('delta'))['delta__sum'] or 0
+
+        stats = {}
+        if request.user.is_consumer:
+            total_orders = getattr(profile, 'total_orders', 0)
+            no_show = getattr(profile, 'no_show_orders', 0)
+            stats = {
+                "total_pickups_completed": getattr(profile, 'completed_orders', 0),
+                "total_no_shows": no_show,
+                "no_show_rate_percent": round((no_show / total_orders * 100) if total_orders else 0, 1)
+            }
+        elif request.user.is_merchant:
+            stats = {
+                "total_pickups_fulfilled": getattr(profile, 'total_orders_fulfilled', 0),
+                "total_no_shows": getattr(profile, 'total_no_shows', 0),
+            }
+
+        return Response({
+            "score": score,
+            "tier": tier,
+            "tier_label": tier.replace("_", " ").title(),
+            "tier_color": tier_data["color"],
+            "score_change_this_week": change,
+            "privileges": privileges,
+            "stats": stats,
+            "next_tier": next_tier
+        })
+
+
+class UserEcoScoreHistoryView(APIView):
+    """
+    GET /api/v1/users/me/eco-score/history/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from .models import EcoScoreEvent
+        from .serializers import EcoScoreEventSerializer
+        
+        qs = EcoScoreEvent.objects.filter(user=request.user).order_by('-created_at')
+        event_type = request.query_params.get("event_type")
+        if event_type:
+            qs = qs.filter(event_type=event_type)
+
+        paginator = AdminPageNumberPagination() # using existing paginator
+        page = paginator.paginate_queryset(qs, request)
+        serializer = EcoScoreEventSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
+
+
+class PublicEcoScoreView(APIView):
+    """
+    GET /api/v1/users/{user_id}/eco-score/public/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, user_id):
+        # Only merchants or admins can see consumer tiers, consumers can see merchant tiers
+        try:
+            target_user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({"error": "User not found."}, status=404)
+
+        if not request.user.is_staff and not (request.user.is_merchant and target_user.is_consumer) and not (request.user.is_consumer and target_user.is_merchant):
+            return Response({"error": "Forbidden."}, status=403)
+
+        profile = target_user.profile
+        if not profile:
+            return Response({"error": "Profile not found."}, status=404)
+
+        tier = getattr(profile, "eco_tier", "suspended")
+        from apps.core.constants import ECO_SCORE_TIERS
+        tier_data = ECO_SCORE_TIERS.get(tier, ECO_SCORE_TIERS["suspended"])
+
+        return Response({
+            "tier": tier,
+            "tier_label": tier.replace("_", " ").title(),
+            "tier_color": tier_data["color"]
+        })
+
+
+class AdminEcoScoreOverrideView(APIView):
+    """
+    POST /api/v1/admin/eco-score-events/{event_id}/override/
+    """
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, event_id):
+        from .models import EcoScoreEvent
+        from apps.users.eco_score_engine import apply_score_event
+        try:
+            event = EcoScoreEvent.objects.get(id=event_id, is_overridden=False)
+        except EcoScoreEvent.DoesNotExist:
+            return Response({"error": "Event not found or already overridden."}, status=404)
+
+        reason = request.data.get("reason", "Admin override")
+        
+        # Reverse the delta
+        apply_score_event(
+            user=event.user,
+            event_type="admin_override",
+            related_object=None,
+            admin=request.user,
+            override_reason=reason
+        )
+        
+        from django.utils import timezone
+        event.is_overridden = True
+        event.overridden_by = request.user
+        event.overridden_at = timezone.now()
+        event.save()
+
+        return Response({"message": "Event successfully overridden."})
+
+
+# ── Profile Update Request views ──────────────────────────────────────────────
+
+class ProfileUpdateRequestCreateView(APIView):
+    """
+    POST /api/v1/profile/request-update/
+    Merchant or charity submits an update request with changed fields and optional documents.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if request.user.user_type not in ["merchant", "charity"]:
+            return Response(
+                {"error": "Only merchants and charities can request profile updates."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        serializer = ProfileUpdateRequestCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        update_request = UserService.request_profile_update(
+            user=request.user,
+            changes=serializer.validated_data["changes"],
+            documents=serializer.validated_data.get("documents", [])
+        )
+
+        return Response(
+            {
+                "message": "Profile update request submitted and is pending admin review.",
+                "request_id": str(update_request.id)
+            },
+            status=status.HTTP_201_CREATED
+        )
+
+
+class AdminProfileUpdateRequestListView(APIView):
+    """
+    GET /api/v1/admin/profile-update-requests/
+    Admin lists pending requests.
+    """
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        status_filter = request.query_params.get("status", "pending")
+        qs = ProfileUpdateRequest.objects.filter(status=status_filter).select_related("user").prefetch_related("documents")
+        
+        paginator = AdminPageNumberPagination()
+        page = paginator.paginate_queryset(qs, request)
+        serializer = ProfileUpdateRequestSerializer(page, many=True)
+        return paginator.get_paginated_response(serializer.data)
+
+
+class AdminProfileUpdateRequestApproveView(APIView):
+    """
+    POST /api/v1/admin/profile-update-requests/{id}/approve/
+    Admin approves a profile update request.
+    """
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, pk):
+        try:
+            update_request = ProfileUpdateRequest.objects.get(id=pk)
+        except ProfileUpdateRequest.DoesNotExist:
+            return Response({"error": "Request not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if update_request.status != "pending":
+            return Response({"error": "Only pending requests can be approved."}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = ProfileUpdateRequestProcessSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        update_request.admin_note = serializer.validated_data.get("admin_note", "")
+        UserService.approve_profile_update(update_request, request.user)
+        
+        return Response({"message": "Profile update request approved and changes applied."})
+
+
+class AdminProfileUpdateRequestRejectView(APIView):
+    """
+    POST /api/v1/admin/profile-update-requests/{id}/reject/
+    Admin rejects a profile update request with a reason.
+    """
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, pk):
+        try:
+            update_request = ProfileUpdateRequest.objects.get(id=pk)
+        except ProfileUpdateRequest.DoesNotExist:
+            return Response({"error": "Request not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if update_request.status != "pending":
+            return Response({"error": "Only pending requests can be rejected."}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = ProfileUpdateRequestProcessSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        if not serializer.validated_data.get("admin_note"):
+            return Response({"error": "A reason (admin_note) is required for rejection."}, status=status.HTTP_400_BAD_REQUEST)
+
+        UserService.reject_profile_update(
+            update_request, 
+            request.user, 
+            serializer.validated_data["admin_note"]
+        )
+        
+        return Response({"message": "Profile update request rejected."})

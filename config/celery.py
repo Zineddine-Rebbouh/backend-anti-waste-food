@@ -31,6 +31,11 @@ app.conf.beat_schedule = {
         "task": "apps.orders.tasks.process_no_show_orders",
         "schedule": 1800.0,  # 30 minutes
     },
+    # ── Hybrid support: admin heartbeat monitor ─────────────────────────────
+    "monitor-stale-admin-assignments": {
+        "task": "chat.monitor_stale_admin_assignments",
+        "schedule": 60.0,  # Every 60 seconds
+    },
 }
 
 

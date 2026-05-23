@@ -9,8 +9,8 @@ class OrderQuerySet(models.QuerySet):
     def pending(self):
         return self.filter(order_status="pending")
 
-    def reserved(self):
-        return self.filter(order_status="reserved")
+    def accepted(self):
+        return self.filter(order_status="accepted")
 
     def collected(self):
         return self.filter(order_status="collected")
@@ -22,8 +22,8 @@ class OrderQuerySet(models.QuerySet):
         return self.filter(order_status="no_show")
 
     def active(self):
-        """Orders that are still in progress (pending or reserved)."""
-        return self.filter(order_status__in=["pending", "reserved"])
+        """Orders that are still in progress (pending, accepted, or legacy statuses)."""
+        return self.filter(order_status__in=["pending", "accepted", "reserved", "active"])
 
     def for_consumer(self, user):
         return self.filter(consumer=user)

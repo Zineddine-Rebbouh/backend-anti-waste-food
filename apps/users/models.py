@@ -7,9 +7,10 @@ import uuid
 from django.contrib.auth.models import AbstractUser
 from django.contrib.gis.db.models import PointField
 from django.db import models
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
-from apps.core.constants import ECO_SCORE_INITIAL, ECO_SCORE_MAX, ECO_SCORE_MIN
+from apps.core.constants import ECO_SCORE_MAX, ECO_SCORE_MIN
 from apps.core.models import TimeStampedModel
 
 from .constants import (
@@ -19,6 +20,8 @@ from .constants import (
     VERIFICATION_STATUS_CHOICES,
     VERIFICATION_STATUS_APPROVED,
     VERIFICATION_STATUS_PENDING,
+    PROFILE_UPDATE_STATUS_CHOICES,
+    PROFILE_UPDATE_STATUS_PENDING,
 )
 from .managers import UserManager
 from .validators import validate_algerian_phone
@@ -114,9 +117,12 @@ class Consumer(TimeStampedModel):
         related_name="consumer_profile",
     )
     eco_score = models.SmallIntegerField(
-        default=ECO_SCORE_INITIAL,
+        default=50,
         help_text=_("Consumer eco score (0–100). Rewards responsible consumption."),
     )
+    eco_tier = models.CharField(max_length=20, default="developing")
+    eco_score_updated_at = models.DateTimeField(default=timezone.now)
+    last_active_at = models.DateTimeField(default=timezone.now)
     total_orders = models.PositiveIntegerField(default=0)
     completed_orders = models.PositiveIntegerField(default=0)
     cancelled_orders = models.PositiveIntegerField(default=0)
@@ -145,37 +151,30 @@ class Consumer(TimeStampedModel):
     def update_eco_score(self, delta: int) -> None:
         """Adjust eco score by delta, clamped to [ECO_SCORE_MIN, ECO_SCORE_MAX]."""
         self.eco_score = max(ECO_SCORE_MIN, min(ECO_SCORE_MAX, self.eco_score + delta))
-        self.save(update_fields=["eco_score", "updated_at"])
+        from django.utils import timezone
+        self.eco_score_updated_at = timezone.now()
+        self.save(update_fields=["eco_score", "eco_score_updated_at", "updated_at"])
 
     def record_order_completion(self) -> None:
         """Record a completed order and update stats."""
-        from apps.core.constants import ECO_SCORE_ORDER_COMPLETE
-
         self.total_orders = models.F("total_orders") + 1
         self.completed_orders = models.F("completed_orders") + 1
         self.save(update_fields=["total_orders", "completed_orders", "updated_at"])
         self.refresh_from_db()
-        self.update_eco_score(ECO_SCORE_ORDER_COMPLETE)
 
     def record_order_cancellation(self) -> None:
         """Record a cancelled order and update stats."""
-        from apps.core.constants import ECO_SCORE_ORDER_CANCEL
-
         self.total_orders = models.F("total_orders") + 1
         self.cancelled_orders = models.F("cancelled_orders") + 1
         self.save(update_fields=["total_orders", "cancelled_orders", "updated_at"])
         self.refresh_from_db()
-        self.update_eco_score(ECO_SCORE_ORDER_CANCEL)
 
     def record_no_show(self) -> None:
         """Record a no-show and apply the eco score penalty."""
-        from apps.core.constants import ECO_SCORE_NO_SHOW
-
         self.total_orders = models.F("total_orders") + 1
         self.no_show_orders = models.F("no_show_orders") + 1
         self.save(update_fields=["total_orders", "no_show_orders", "updated_at"])
         self.refresh_from_db()
-        self.update_eco_score(ECO_SCORE_NO_SHOW)
 
 
 class Merchant(TimeStampedModel):
@@ -248,7 +247,11 @@ class Merchant(TimeStampedModel):
         help_text=_("Average rating from 0.00 to 5.00"),
     )
     total_reviews = models.PositiveIntegerField(default=0)
-    trust_score = models.SmallIntegerField(default=50)
+    eco_score = models.SmallIntegerField(default=60)
+    eco_tier = models.CharField(max_length=20, default="developing")
+    eco_score_updated_at = models.DateTimeField(default=timezone.now)
+    last_active_at = models.DateTimeField(default=timezone.now)
+    total_no_shows = models.PositiveIntegerField(default=0)
     # Stats
     total_listings = models.PositiveIntegerField(default=0)
     total_orders_fulfilled = models.PositiveIntegerField(default=0)
@@ -280,15 +283,17 @@ class Merchant(TimeStampedModel):
         return self.verification_status == VERIFICATION_STATUS_APPROVED
 
     def update_trust_score(self) -> None:
-        """Recalculate trust score based on fulfilment rate and reviews."""
+        """Recalculate trust score based on fulfilment rate and reviews. (Deprecated/Migrated to eco_score)"""
         fulfilment_rate = (
             self.total_orders_fulfilled / max(self.total_listings, 1)
         ) * 100
         # Simple weighted score: 70% fulfilment rate + 30% normalized rating
         normalized_rating = (float(self.average_rating) / 5.0) * 100
-        self.trust_score = int((fulfilment_rate * 0.7) + (normalized_rating * 0.3))
-        self.trust_score = max(0, min(100, self.trust_score))
-        self.save(update_fields=["trust_score", "updated_at"])
+        self.eco_score = int((fulfilment_rate * 0.7) + (normalized_rating * 0.3))
+        self.eco_score = max(0, min(100, self.eco_score))
+        from django.utils import timezone
+        self.eco_score_updated_at = timezone.now()
+        self.save(update_fields=["eco_score", "eco_score_updated_at", "updated_at"])
 
 
 class Charity(TimeStampedModel):
@@ -331,6 +336,11 @@ class Charity(TimeStampedModel):
         related_name="verified_charities",
     )
     registration_number = models.CharField(max_length=100, blank=True)
+    eco_score = models.SmallIntegerField(default=60)
+    eco_tier = models.CharField(max_length=20, default="developing")
+    eco_score_updated_at = models.DateTimeField(default=timezone.now)
+    last_active_at = models.DateTimeField(default=timezone.now)
+    total_no_shows = models.PositiveIntegerField(default=0)
     # Stats
     total_donations_received = models.PositiveIntegerField(default=0)
     total_meals_provided = models.PositiveIntegerField(default=0)
@@ -433,3 +443,117 @@ class FavoriteListing(TimeStampedModel):
 
     def __str__(self):
         return f"{self.user.email} -> {self.listing_id}"
+
+
+class EcoScoreEvent(models.Model):
+    """Audit log of every Eco Score change."""
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        "users.User",
+        on_delete=models.CASCADE,
+        related_name="eco_score_events",
+    )
+    event_type = models.CharField(max_length=50)
+    delta = models.IntegerField()
+    score_before = models.IntegerField()
+    score_after = models.IntegerField()
+    reason = models.CharField(max_length=255)
+    related_object_type = models.CharField(max_length=50, blank=True)
+    related_object_id = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.CharField(max_length=50, default="system")
+    admin_note = models.TextField(blank=True, null=True)
+    is_overridden = models.BooleanField(default=False)
+    overridden_by = models.ForeignKey(
+        "users.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="overridden_eco_score_events",
+    )
+    overridden_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = _("eco score event")
+        verbose_name_plural = _("eco score events")
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "-created_at"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "event_type", "related_object_id"],
+                name="unique_event_per_object",
+                condition=models.Q(related_object_id__isnull=False),
+            )
+        ]
+
+    def __str__(self):
+        return f"[{self.user.email}] {self.event_type} ({self.delta})"
+class ProfileUpdateRequest(TimeStampedModel):
+    """
+    Stores requests from merchants or charities to update sensitive fields.
+    Changes stay in this model until an admin approves them.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        "users.User",
+        on_delete=models.CASCADE,
+        related_name="profile_update_requests",
+    )
+    # The fields being changed: {"business_name": {"old": "Old", "new": "New"}, ...}
+    changes = models.JSONField(
+        default=dict,
+        help_text=_("JSON object mapping field names to old and new values."),
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=PROFILE_UPDATE_STATUS_CHOICES,
+        default=PROFILE_UPDATE_STATUS_PENDING,
+        db_index=True,
+    )
+    admin_note = models.TextField(blank=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+    processed_by = models.ForeignKey(
+        "users.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="processed_profile_updates",
+    )
+
+    class Meta:
+        verbose_name = _("profile update request")
+        verbose_name_plural = _("profile update requests")
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Update Request: {self.user.email} ({self.status})"
+
+
+class ProfileUpdateDocument(TimeStampedModel):
+    """
+    Documents uploaded as part of a profile update request.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    request = models.ForeignKey(
+        ProfileUpdateRequest,
+        on_delete=models.CASCADE,
+        related_name="documents",
+    )
+    document_type = models.CharField(
+        max_length=50,
+        help_text=_("e.g. registration_cert, id_proof"),
+    )
+    file_url = models.URLField()
+    file_name = models.CharField(max_length=255)
+
+    class Meta:
+        verbose_name = _("profile update document")
+        verbose_name_plural = _("profile update documents")
+
+    def __str__(self):
+        return f"Doc for {self.request.id}: {self.file_name}"

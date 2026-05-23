@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import DailyMetrics
+from .models import DailyMetrics, UserActivity
 
 
 class DailyMetricsSerializer(serializers.ModelSerializer):
@@ -25,3 +25,11 @@ class MerchantAnalyticsSerializer(serializers.Serializer):
     total_revenue = serializers.FloatField()
     active_listings = serializers.IntegerField()
     average_rating = serializers.FloatField()
+
+
+class UserActivitySerializer(serializers.ModelSerializer):
+    user_email = serializers.EmailField(source="user.email", read_only=True)
+
+    class Meta:
+        model = UserActivity
+        fields = ["id", "user_email", "activity_type", "metadata", "created_at"]

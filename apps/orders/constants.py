@@ -1,13 +1,12 @@
-# ── Order status ──────────────────────────────────────────────────────────────
 ORDER_STATUS_PENDING = "pending"
-ORDER_STATUS_RESERVED = "reserved"
+ORDER_STATUS_ACCEPTED = "accepted"
 ORDER_STATUS_COLLECTED = "collected"
 ORDER_STATUS_CANCELLED = "cancelled"
 ORDER_STATUS_NO_SHOW = "no_show"
 
 ORDER_STATUS_CHOICES = [
     (ORDER_STATUS_PENDING, "Pending"),
-    (ORDER_STATUS_RESERVED, "Reserved"),
+    (ORDER_STATUS_ACCEPTED, "Accepted"),
     (ORDER_STATUS_COLLECTED, "Collected"),
     (ORDER_STATUS_CANCELLED, "Cancelled"),
     (ORDER_STATUS_NO_SHOW, "No Show"),

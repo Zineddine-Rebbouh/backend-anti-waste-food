@@ -18,6 +18,7 @@ urlpatterns = [
     path("api/v1/", include("apps.reviews.urls")),
     path("api/v1/", include("apps.notifications.urls")),
     path("api/v1/", include("apps.analytics.urls")),
+    path("api/v1/", include("apps.chat.urls")),
     # API Schema & Docs
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path(
@@ -32,6 +33,8 @@ urlpatterns = [
     ),
     # Health checks
     path("health/", include("apps.core.urls")),
+    # Geographic utilities (wilaya detection, wilaya list)
+    path("api/v1/", include("apps.core.urls")),
 ]
 
 if settings.DEBUG:

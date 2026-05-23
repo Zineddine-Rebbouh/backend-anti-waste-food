@@ -27,6 +27,14 @@ from .views import (
     UserAddressListCreateView,
     UserMeView,
     UserRegistrationView,
+    UserEcoScoreView,
+    UserEcoScoreHistoryView,
+    PublicEcoScoreView,
+    AdminEcoScoreOverrideView,
+    ProfileUpdateRequestCreateView,
+    AdminProfileUpdateRequestListView,
+    AdminProfileUpdateRequestApproveView,
+    AdminProfileUpdateRequestRejectView,
 )
 
 router = DefaultRouter()
@@ -63,10 +71,16 @@ urlpatterns = [
     path("users/me/favorites/", FavoriteListingListCreateView.as_view(), name="users-favorite-list-create"),
     path("users/me/favorites/ids/", FavoriteListingIdsView.as_view(), name="users-favorite-ids"),
     path("users/me/favorites/<uuid:listing_id>/", FavoriteListingDeleteView.as_view(), name="users-favorite-delete"),
+    # Eco Score
+    path("users/me/eco-score/", UserEcoScoreView.as_view(), name="users-eco-score"),
+    path("users/me/eco-score/history/", UserEcoScoreHistoryView.as_view(), name="users-eco-score-history"),
+    path("users/<uuid:user_id>/eco-score/public/", PublicEcoScoreView.as_view(), name="users-eco-score-public"),
     # Merchant location
     path("merchants/me/location/", MerchantLocationView.as_view(), name="merchant-location"),
     # Charity service area
     path("charities/me/service-area/", CharityServiceAreaView.as_view(), name="charity-service-area"),
+    # Profile update requests
+    path("profile/request-update/", ProfileUpdateRequestCreateView.as_view(), name="profile-request-update"),
     # Admin verification
     path(
         "admin/merchants/<int:merchant_id>/verify/",
@@ -87,6 +101,15 @@ urlpatterns = [
         AdminUserToggleActiveView.as_view(),
         name="admin-user-toggle-active",
     ),
+    path(
+        "admin/eco-score-events/<uuid:event_id>/override/",
+        AdminEcoScoreOverrideView.as_view(),
+        name="admin-eco-score-override",
+    ),
+    # Admin profile update requests
+    path("admin/profile-update-requests/", AdminProfileUpdateRequestListView.as_view(), name="admin-profile-request-list"),
+    path("admin/profile-update-requests/<uuid:pk>/approve/", AdminProfileUpdateRequestApproveView.as_view(), name="admin-profile-request-approve"),
+    path("admin/profile-update-requests/<uuid:pk>/reject/", AdminProfileUpdateRequestRejectView.as_view(), name="admin-profile-request-reject"),
 ]
 
 urlpatterns += router.urls

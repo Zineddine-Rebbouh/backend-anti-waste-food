@@ -88,6 +88,17 @@ class DonationRequestSerializer(serializers.ModelSerializer):
     charity_wilaya = serializers.CharField(
         source="charity.charity_profile.wilaya", read_only=True, default=""
     )
+    listing_title = serializers.CharField(source="donation.listing.title", read_only=True)
+    listing_photo = serializers.SerializerMethodField()
+    merchant_name = serializers.CharField(source="donation.merchant.merchant_profile.business_name", read_only=True)
+    merchant_address = serializers.CharField(source="donation.merchant.merchant_profile.address", read_only=True)
+    merchant_latitude = serializers.FloatField(source="donation.merchant.merchant_profile.latitude", read_only=True)
+    merchant_longitude = serializers.FloatField(source="donation.merchant.merchant_profile.longitude", read_only=True)
+    merchant_phone = serializers.CharField(source="donation.merchant.merchant_profile.phone_number", read_only=True)
+    quantity = serializers.IntegerField(source="donation.listing.quantity_total", read_only=True)
+    pickup_start = serializers.DateTimeField(source="donation.listing.pickup_start", read_only=True)
+    pickup_end = serializers.DateTimeField(source="donation.listing.pickup_end", read_only=True)
+    qr_data = serializers.SerializerMethodField()
 
     class Meta:
         model = DonationRequest
@@ -99,10 +110,39 @@ class DonationRequestSerializer(serializers.ModelSerializer):
             "charity_wilaya",
             "status",
             "message",
+            "listing_title",
+            "listing_photo",
+            "merchant_name",
+            "merchant_address",
+            "merchant_latitude",
+            "merchant_longitude",
+            "merchant_phone",
+            "quantity",
+            "pickup_start",
+            "pickup_end",
+            "qr_data",
             "responded_at",
             "created_at",
         ]
         read_only_fields = ["id", "status", "responded_at", "created_at"]
+
+    def get_listing_photo(self, obj):
+        return obj.donation.listing.primary_photo_url
+
+    def get_qr_data(self, obj):
+        request = self.context.get("request")
+        donation = obj.donation
+        if (
+            request
+            and request.user.is_authenticated
+            and donation.assigned_charity == request.user
+            and donation.status == "assigned"
+        ):
+            return {
+                "qr_hash": donation.qr_hash,
+                "expires_at": donation.qr_expires_at,
+            }
+        return None
 
 
 class DonationRequestCreateSerializer(serializers.Serializer):

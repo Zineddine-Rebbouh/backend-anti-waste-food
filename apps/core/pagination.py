@@ -17,6 +17,12 @@ class CustomCursorPagination(CursorPagination):
     ordering = "-created_at"
     cursor_query_param = "cursor"
 
+    def get_paginated_response(self, data, extra_meta=None):
+        response = super().get_paginated_response(data)
+        if extra_meta is not None:
+            response.data['meta'] = extra_meta
+        return response
+
 
 class AdminPageNumberPagination(PageNumberPagination):
     """

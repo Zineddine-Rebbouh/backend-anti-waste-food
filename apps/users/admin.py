@@ -6,7 +6,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.translation import gettext_lazy as _
 
-from .models import Charity, Consumer, Merchant, User
+from .models import Charity, Consumer, EcoScoreEvent, Merchant, User
 
 
 class ConsumerInline(admin.StackedInline):
@@ -107,14 +107,21 @@ class ConsumerAdmin(admin.ModelAdmin):
     list_display = [
         "user",
         "eco_score",
+        "eco_tier",
         "total_orders",
         "completed_orders",
         "total_food_saved_kg",
         "created_at",
     ]
-    list_filter = ["created_at"]
+    list_filter = ["eco_tier", "created_at"]
     search_fields = ["user__email", "user__phone"]
-    readonly_fields = ["total_orders", "completed_orders", "cancelled_orders", "no_show_orders"]
+    readonly_fields = [
+        "eco_score_updated_at",
+        "total_orders",
+        "completed_orders",
+        "cancelled_orders",
+        "no_show_orders",
+    ]
 
 
 @admin.register(Merchant)
@@ -122,21 +129,23 @@ class MerchantAdmin(admin.ModelAdmin):
     list_display = [
         "business_name",
         "user",
-        "business_type",
-        "wilaya",
+        "eco_score",
+        "eco_tier",
         "verification_status",
         "average_rating",
         "is_active",
         "created_at",
     ]
-    list_filter = ["business_type", "verification_status", "wilaya", "is_active"]
+    list_filter = ["eco_tier", "business_type", "verification_status", "wilaya", "is_active"]
     search_fields = ["business_name", "user__email", "registration_number"]
     readonly_fields = [
+        "eco_score_updated_at",
         "verified_at",
         "verified_by",
         "average_rating",
         "total_reviews",
-        "trust_score",
+        "eco_score",
+        "total_no_shows",
     ]
 
     actions = ["approve_merchants", "reject_merchants"]
@@ -159,12 +168,26 @@ class CharityAdmin(admin.ModelAdmin):
     list_display = [
         "organization_name",
         "user",
-        "wilaya",
+        "eco_score",
+        "eco_tier",
         "verification_status",
         "total_donations_received",
         "is_active",
         "created_at",
     ]
-    list_filter = ["verification_status", "wilaya", "is_active"]
+    list_filter = ["eco_tier", "verification_status", "wilaya", "is_active"]
     search_fields = ["organization_name", "user__email", "registration_number"]
-    readonly_fields = ["verified_at", "verified_by", "total_donations_received"]
+    readonly_fields = [
+        "eco_score_updated_at",
+        "verified_at",
+        "verified_by",
+        "total_donations_received",
+        "eco_score",
+        "total_no_shows",
+    ]
+@admin.register(EcoScoreEvent)
+class EcoScoreEventAdmin(admin.ModelAdmin):
+    list_display = ["user", "event_type", "delta", "score_after", "created_at"]
+    list_filter = ["event_type", "created_at"]
+    search_fields = ["user__email", "reason"]
+    readonly_fields = ["id", "created_at"]

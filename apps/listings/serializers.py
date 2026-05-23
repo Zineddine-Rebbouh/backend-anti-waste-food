@@ -33,6 +33,9 @@ class ListingListSerializer(serializers.ModelSerializer):
         decimal_places=2,
         read_only=True,
     )
+    merchant_logo_url = serializers.CharField(
+        source="merchant.merchant_profile.logo_url", read_only=True, default=""
+    )
     primary_photo_url = serializers.SerializerMethodField()
     discount_percentage = serializers.FloatField(read_only=True)
     distance_km = serializers.SerializerMethodField()
@@ -59,6 +62,7 @@ class ListingListSerializer(serializers.ModelSerializer):
             "primary_photo_url",
             "merchant_name",
             "merchant_rating",
+            "merchant_logo_url",
             "distance_km",
             "is_favorite",
             "created_at",
@@ -71,12 +75,38 @@ class ListingListSerializer(serializers.ModelSerializer):
         # Set by annotate() in the view when geographic search is used
         distance = getattr(obj, "distance", None)
         if distance is not None:
-            return round(distance.km, 2)
+            if hasattr(distance, "km"):
+                return round(distance.km, 2)
+            elif isinstance(distance, (float, int)):
+                # Approximation: 1 degree is roughly 111.32 km
+                return round(distance * 111.32, 2)
         return None
 
     def get_is_favorite(self, obj):
         favorite_ids = self.context.get("favorite_ids") or set()
         return str(obj.id) in favorite_ids
+
+
+class ListingFeedSerializer(ListingListSerializer):
+    """Extended serializer for the proximity-based feed with urgency and border flags."""
+
+    urgency_label = serializers.SerializerMethodField()
+    is_border_area = serializers.SerializerMethodField()
+
+    class Meta(ListingListSerializer.Meta):
+        fields = ListingListSerializer.Meta.fields + ["urgency_label", "is_border_area"]
+
+    def get_urgency_label(self, obj):
+        # Annotations from ListingFeedView
+        score = getattr(obj, "urgency_score", 0)
+        if score >= 6:
+            return "critical"
+        if score >= 3:
+            return "high"
+        return "normal"
+
+    def get_is_border_area(self, obj):
+        return getattr(obj, "is_border_area", False)
 
 
 class ListingDetailSerializer(serializers.ModelSerializer):

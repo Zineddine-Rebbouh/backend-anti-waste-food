@@ -4,6 +4,12 @@
 import os
 import sys
 
+# Ensure UTF-8 output on Windows for Arabic/Emoji support
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
 
 def main() -> None:
     """Run administrative tasks."""

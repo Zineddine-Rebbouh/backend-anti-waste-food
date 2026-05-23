@@ -33,6 +33,19 @@ VERIFICATION_STATUS_CHOICES = [
 ]
 
 # ---------------------------------------------------------------------------
+# Profile update request status constants
+# ---------------------------------------------------------------------------
+PROFILE_UPDATE_STATUS_PENDING = "pending"
+PROFILE_UPDATE_STATUS_APPROVED = "approved"
+PROFILE_UPDATE_STATUS_REJECTED = "rejected"
+
+PROFILE_UPDATE_STATUS_CHOICES = [
+    (PROFILE_UPDATE_STATUS_PENDING, "Pending"),
+    (PROFILE_UPDATE_STATUS_APPROVED, "Approved"),
+    (PROFILE_UPDATE_STATUS_REJECTED, "Rejected"),
+]
+
+# ---------------------------------------------------------------------------
 # Business type choices (for merchant profiles)
 # ---------------------------------------------------------------------------
 BUSINESS_TYPE_CHOICES = [
@@ -60,3 +73,12 @@ PAYMENT_METHODS_CHOICES = [
     ("cash", "Cash"),
     ("card", "Card"),
 ]
+
+# ---------------------------------------------------------------------------
+# Profile update sensitivity
+# ---------------------------------------------------------------------------
+SENSITIVE_PROFILE_FIELDS = {
+    "business_name", "organization_name", "business_name_ar", "organization_name_ar",
+    "address", "wilaya", "business_type", "phone", 
+    "registration_number", "tax_id", "latitude", "longitude"
+}

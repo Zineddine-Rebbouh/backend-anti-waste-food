@@ -116,8 +116,8 @@ class Order(TimeStampedModel):
 
     @property
     def is_cancellable(self) -> bool:
-        """Consumer can cancel only while order is pending or reserved."""
-        return self.order_status in ("pending", "reserved")
+        """Consumer can cancel only while order is pending or accepted."""
+        return self.order_status in ("pending", "accepted")
 
     @property
     def is_terminal(self) -> bool:

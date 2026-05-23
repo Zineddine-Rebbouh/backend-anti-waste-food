@@ -39,6 +39,7 @@ ALLOWED_HOSTS = env("ALLOWED_HOSTS", default=["localhost", "127.0.0.1"])
 # Application definition
 # ---------------------------------------------------------------------------
 DJANGO_APPS = [
+    "daphne",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -57,6 +58,7 @@ THIRD_PARTY_APPS = [
     "drf_spectacular",
     "django_celery_beat",
     "storages",
+    "channels",
 ]
 
 LOCAL_APPS = [
@@ -68,6 +70,8 @@ LOCAL_APPS = [
     "apps.reviews",
     "apps.notifications",
     "apps.analytics",
+    "apps.chat",
+    "apps.recommendations",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -297,6 +301,23 @@ SPECTACULAR_SETTINGS = {
 # ---------------------------------------------------------------------------
 REDIS_URL = env("REDIS_URL", default="redis://localhost:6379/0")
 
+# ---------------------------------------------------------------------------
+# Django Channels (WebSockets)
+# ---------------------------------------------------------------------------
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [REDIS_URL],
+        },
+    }
+}
+
+# ---------------------------------------------------------------------------
+# AI / LLM Configuration
+# ---------------------------------------------------------------------------
+GEMINI_API_KEY = env("GEMINI_API_KEY", default="[GCP_API_KEY]")
+
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
@@ -333,8 +354,10 @@ CELERY_TASK_TRACK_STARTED = True
 
 # ---------------------------------------------------------------------------
 # CORS
-# ---------------------------------------------------------------------------
-CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[])
+if DEBUG:
+    CORS_ALLOW_ALL_ORIGINS = True
+else:
+    CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[])
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = [
     "accept",

@@ -1,4 +1,4 @@
-﻿"""
+"""
 django-filter FilterSet for Listing queries.
 """
 
@@ -27,9 +27,12 @@ class ListingFilter(django_filters.FilterSet):
         field_name="merchant__merchant_profile__average_rating", lookup_expr="gte"
     )
     # Geographic proximity – handled via overridden filter_queryset
-    lat = django_filters.NumberFilter(label="Latitude")
-    lng = django_filters.NumberFilter(label="Longitude")
-    radius = django_filters.NumberFilter(label="Radius (km)")
+    lat = django_filters.NumberFilter(label="Latitude", method="noop")
+    lng = django_filters.NumberFilter(label="Longitude", method="noop")
+    radius = django_filters.NumberFilter(label="Radius (km)", method="noop")
+
+    def noop(self, queryset, name, value):
+        return queryset
 
     class Meta:
         model = Listing

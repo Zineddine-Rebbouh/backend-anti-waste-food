@@ -50,9 +50,8 @@ services:
     container_name: savefood_web
     restart: unless-stopped
     command: >
-      sh -c "python manage.py wait_for_db &&
-             python manage.py migrate &&
-             python manage.py runserver 0.0.0.0:8000"
+      sh -c "python manage.py migrate &&
+             python manage.py runserver 0.0.0.0:8080"
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.development
       DATABASE_URL: postgresql://savefood_user:savefood_pass@db:5432/savefood_db
@@ -63,7 +62,7 @@ services:
     env_file:
       - .env
     ports:
-      - "8000:8000"
+      - "8080:8080"
     volumes:
       - .:/app
       - media_data:/app/media
@@ -74,7 +73,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health/')"]
       interval: 30s
       timeout: 10s
       start_period: 40s

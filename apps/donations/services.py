@@ -54,10 +54,19 @@ class DonationService:
             extra={"donation_id": str(donation.id), "merchant_id": str(merchant_user.id)},
         )
 
-        # Notify nearby charities
-        from .tasks import notify_nearby_charities
+        # Notify nearby charities asynchronously.
+        # Wrap in try/except so a Celery broker failure never rolls back the donation.
+        try:
+            from .tasks import notify_nearby_charities
 
-        notify_nearby_charities.delay(str(donation.id))
+            notify_nearby_charities.delay(str(donation.id))
+        except Exception as task_exc:
+            logger.warning(
+                "Could not enqueue notify_nearby_charities task; "
+                "donation was still created successfully.",
+                extra={"donation_id": str(donation.id), "error": str(task_exc)},
+            )
+
         return donation
 
     @staticmethod
@@ -173,14 +182,17 @@ class DonationService:
 
     @staticmethod
     @transaction.atomic
-    def collect_donation(donation, qr_hash_provided: str, charity_user):
+    def collect_donation(donation, qr_hash_provided: str, charity_user, perfomed_by_user=None):
         """
         Charity presents QR code to complete donation collection.
+        If perfomed_by_user is provided (merchant scanning), verify they are the merchant.
         """
         from apps.core.exceptions import InvalidQRCodeError
 
-        if donation.assigned_charity != charity_user and not charity_user.is_staff:
-            raise PermissionError("Only the assigned charity can collect this donation.")
+        performer = perfomed_by_user or charity_user
+
+        if performer != charity_user and performer != donation.merchant and not performer.is_staff:
+            raise PermissionError("Unauthorized to collect/fulfill this donation.")
 
         if donation.status != DONATION_STATUS_ASSIGNED:
             raise ValueError(

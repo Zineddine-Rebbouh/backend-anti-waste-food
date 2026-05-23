@@ -8,7 +8,10 @@ from django.db import transaction
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
-from .models import Charity, Consumer, FavoriteListing, Merchant, UserAddress
+from .models import (
+    Charity, Consumer, FavoriteListing, Merchant, UserAddress,
+    ProfileUpdateRequest, ProfileUpdateDocument
+)
 
 User = get_user_model()
 
@@ -27,6 +30,9 @@ class ConsumerProfileSerializer(serializers.ModelSerializer):
         model = Consumer
         fields = [
             "eco_score",
+            "eco_tier",
+            "eco_score_updated_at",
+            "last_active_at",
             "total_orders",
             "completed_orders",
             "cancelled_orders",
@@ -38,6 +44,9 @@ class ConsumerProfileSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "eco_score",
+            "eco_tier",
+            "eco_score_updated_at",
+            "last_active_at",
             "total_orders",
             "completed_orders",
             "cancelled_orders",
@@ -68,7 +77,11 @@ class MerchantProfileSerializer(serializers.ModelSerializer):
             "verification_status",
             "average_rating",
             "total_reviews",
-            "trust_score",
+            "eco_score",
+            "eco_tier",
+            "eco_score_updated_at",
+            "last_active_at",
+            "total_no_shows",
             "total_listings",
             "total_orders_fulfilled",
             "total_donations",
@@ -82,7 +95,11 @@ class MerchantProfileSerializer(serializers.ModelSerializer):
             "verification_status",
             "average_rating",
             "total_reviews",
-            "trust_score",
+            "eco_score",
+            "eco_tier",
+            "eco_score_updated_at",
+            "last_active_at",
+            "total_no_shows",
             "total_listings",
             "total_orders_fulfilled",
             "total_donations",
@@ -107,6 +124,11 @@ class CharityProfileSerializer(serializers.ModelSerializer):
             "website",
             "logo_url",
             "verification_status",
+            "eco_score",
+            "eco_tier",
+            "eco_score_updated_at",
+            "last_active_at",
+            "total_no_shows",
             "total_donations_received",
             "total_meals_provided",
             "total_families_helped",
@@ -118,6 +140,11 @@ class CharityProfileSerializer(serializers.ModelSerializer):
         read_only_fields = [
             "id",
             "verification_status",
+            "eco_score",
+            "eco_tier",
+            "eco_score_updated_at",
+            "last_active_at",
+            "total_no_shows",
             "total_donations_received",
             "total_meals_provided",
             "total_families_helped",
@@ -390,7 +417,8 @@ class AdminMerchantSerializer(serializers.ModelSerializer):
             "id", "business_name", "business_type", "wilaya", "address",
             "phone", "website", "logo_url", "registration_number",
             "verification_status", "verification_notes",
-            "trust_score", "total_orders_fulfilled", "average_rating",
+            "eco_score", "eco_tier", "total_no_shows", 
+            "total_orders_fulfilled", "average_rating",
             "total_reviews", "total_listings", "food_saved_kg",
             "is_active", "created_at", "verified_at",
             "email", "owner_name",
@@ -561,3 +589,66 @@ class FavoriteListingSerializer(serializers.ModelSerializer):
     class Meta:
         model = FavoriteListing
         fields = ["listing_id", "created_at"]
+
+
+class EcoScoreEventSerializer(serializers.ModelSerializer):
+    """Represents a single score event in the user's history."""
+
+    class Meta:
+        from .models import EcoScoreEvent
+        model = EcoScoreEvent
+        fields = [
+            "id",
+            "event_type",
+            "delta",
+            "score_before",
+            "score_after",
+            "reason",
+            "created_at",
+        ]
+        read_only_fields = fields
+
+
+class ProfileUpdateDocumentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProfileUpdateDocument
+        fields = ["id", "document_type", "file_url", "file_name", "created_at"]
+        read_only_fields = ["id", "created_at"]
+
+
+class ProfileUpdateRequestSerializer(serializers.ModelSerializer):
+    documents = ProfileUpdateDocumentSerializer(many=True, read_only=True)
+    user_email = serializers.EmailField(source="user.email", read_only=True)
+
+    class Meta:
+        model = ProfileUpdateRequest
+        fields = [
+            "id", "user", "user_email", "changes", "status", 
+            "admin_note", "documents", "created_at", 
+            "processed_at", "processed_by"
+        ]
+        read_only_fields = [
+            "id", "user", "user_email", "status", "documents", 
+            "created_at", "processed_at", "processed_by"
+        ]
+
+
+class ProfileUpdateRequestCreateSerializer(serializers.Serializer):
+    changes = serializers.DictField(
+        help_text="Dictionary of fields to change. Sensitive fields only."
+    )
+    documents = serializers.ListField(
+        child=serializers.DictField(),
+        required=False,
+        default=list,
+        help_text="List of {document_type, file_url, file_name} objects."
+    )
+
+    def validate_changes(self, value):
+        if not value:
+            raise serializers.ValidationError("At least one change must be requested.")
+        return value
+
+
+class ProfileUpdateRequestProcessSerializer(serializers.Serializer):
+    admin_note = serializers.CharField(required=False, allow_blank=True, default="")

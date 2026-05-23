@@ -3,9 +3,23 @@ from rest_framework.generics import ListAPIView
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from apps.core.permissions import IsMerchant
-from .models import DailyMetrics
-from .serializers import DailyMetricsSerializer, MerchantAnalyticsSerializer, PlatformStatsSerializer
+from .models import DailyMetrics, UserActivity
+from .serializers import (
+    DailyMetricsSerializer,
+    MerchantAnalyticsSerializer,
+    PlatformStatsSerializer,
+    UserActivitySerializer,
+)
 from .services import AnalyticsService
+
+
+class AdminUserActivityListView(ListAPIView):
+    """GET /admin/activity/ – Admin: platform-wide activity log."""
+    permission_classes = [permissions.IsAdminUser]
+    serializer_class = UserActivitySerializer
+
+    def get_queryset(self):
+        return UserActivity.objects.select_related("user").order_by("-created_at")
 
 
 class PlatformStatsView(APIView):
