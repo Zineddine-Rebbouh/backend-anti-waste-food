@@ -36,6 +36,15 @@ app.conf.beat_schedule = {
         "task": "chat.monitor_stale_admin_assignments",
         "schedule": 60.0,  # Every 60 seconds
     },
+    # ── Recommendation engine ──────────────────────────────────────────────
+    "update-trending-scores": {
+        "task": "recommendations.update_trending_scores",
+        "schedule": 1800,  # every 30 minutes
+    },
+    "rebuild-all-user-profiles": {
+        "task": "recommendations.rebuild_all_user_profiles",
+        "schedule": 3600,  # every 60 minutes
+    },
 }
 
 

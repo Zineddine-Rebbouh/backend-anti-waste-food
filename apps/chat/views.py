@@ -50,7 +50,8 @@ from .serializers import (
     EndSessionSerializer, IntentFeedbackCreateSerializer,
     SendMessageSerializer,
 )
-from .services import end_conversation, get_or_create_conversation, process_message
+from .ai_engine import get_rag_response
+from .services import end_conversation, get_or_create_conversation
 
 logger = logging.getLogger(__name__)
 
@@ -269,11 +270,52 @@ class SendMessageView(APIView):
 
         # ── AI mode: run pipeline ─────────────────────────────────────────────
         try:
-            chat_response = process_message(
-                conversation=conversation,
-                user_message_text=message_text,
-                use_llm=True,
+            chat_history = list(
+                conversation.messages.exclude(id=user_msg.id)
+                .order_by("-created_at")
+                .values("sender", "text_content")[:6]
             )
+            chat_history.reverse()
+            result = get_rag_response(
+                user_message=message_text,
+                user_context={
+                    "name": getattr(request.user, "name", None)
+                    or request.user.get_full_name()
+                    or request.user.first_name
+                    or request.user.email.split("@")[0],
+                    "user_type": request.user.user_type,
+                    "reliability_score": getattr(request.user, "reliability_score", "N/A"),
+                },
+                conversation_history=[
+                    {
+                        "sender": "user" if item["sender"] == MessageSender.USER else (
+                            "admin" if item["sender"] == MessageSender.ADMIN else "ai"
+                        ),
+                        "message": item["text_content"],
+                    }
+                    for item in chat_history
+                ],
+            )
+            answer = result["response"]
+            needs_human = result["needs_human"]
+            bot_msg = ChatMessage.objects.create(
+                conversation=conversation,
+                sender=MessageSender.BOT,
+                message_type=MessageType.TEXT,
+                text_content=answer,
+            )
+            Conversation.objects.filter(pk=conversation.pk).update(
+                message_count=F("message_count") + 1,
+                updated_at=timezone.now(),
+            )
+            if needs_human and conversation.status == ConversationStatus.ACTIVE:
+                conversation.escalate(reason="RAG escalation triggered")
+                ChatMessage.objects.create(
+                    conversation=conversation,
+                    sender=MessageSender.SYSTEM,
+                    message_type=MessageType.SYSTEM_MESSAGE,
+                    text_content="Conversation escalated to human support.",
+                )
         except Exception as exc:
             logger.error("API Error: AI pipeline failed for conversation %s: %s", conversation.id, exc, exc_info=True)
             # Auto-bump priority on AI failure
@@ -289,26 +331,19 @@ class SendMessageView(APIView):
         response_data = {
             "conversation_id": str(conversation.id),
             "message": {
-                "id": chat_response.message_id,
+                "id": str(bot_msg.id),
                 "sender": "bot",
-                "text": chat_response.text,
-                "cards": [
-                    {"type": c.type, "title": c.title, "subtitle": c.subtitle,
-                     "image_url": c.image_url, "data": c.data, "actions": c.actions}
-                    for c in chat_response.cards
-                ],
-                "quick_replies": [
-                    {"label": qr.label, "action": qr.action, "payload": qr.payload}
-                    for qr in chat_response.quick_replies
-                ],
-                "intent": chat_response.intent,
+                "text": answer,
+                "cards": [],
+                "quick_replies": [],
+                "intent": None,
                 "timestamp": timezone.now().isoformat(),
-            },
-            "conversation_status": conversation.status,
-            "escalated": chat_response.should_escalate,
-            "reply": chat_response.text,
-            "status": "success",
-        }
+                },
+                "conversation_status": conversation.status,
+                "escalated": needs_human,
+                "reply": answer,
+                "status": "success",
+            }
         
         logger.info("API response: %s", response_data)
         return Response(response_data)

@@ -38,6 +38,22 @@ class UserInteraction(TimeStampedModel):
     score = models.FloatField(help_text=_("Interaction weight/score"))
     timestamp = models.DateTimeField(help_text=_("Exact time of interaction"))
     time_of_day = models.IntegerField(help_text=_("Hour of the day 0-23"))
+    user_lat = models.FloatField(
+        null=True,
+        blank=True,
+        help_text=_("User latitude at time of interaction")
+    )
+    user_lon = models.FloatField(
+        null=True,
+        blank=True,
+        help_text=_("User longitude at time of interaction")
+    )
+    session_id = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        help_text=_("Optional session identifier for grouping interactions")
+    )
 
     class Meta:
         verbose_name = _("user interaction")
@@ -138,3 +154,76 @@ class RecommendationConfig(TimeStampedModel):
         if self.is_active:
             RecommendationConfig.objects.filter(is_active=True).exclude(pk=self.pk).update(is_active=False)
         super().save(*args, **kwargs)
+
+
+class RecommendationLog(TimeStampedModel):
+    """
+    Records every recommendation shown to a user and tracks
+    whether it was clicked or resulted in a reservation.
+    Used for evaluation, A/B testing, and monitoring.
+    This table is append-only — never updated except for
+    was_clicked and was_reserved flags.
+    """
+
+    SOURCE_CHOICES = [
+        ("content", "Content-Based"),
+        ("collab", "Collaborative"),
+        ("geo", "Geospatial"),
+        ("trending", "Trending"),
+        ("hybrid", "Hybrid"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="recommendation_logs",
+    )
+    listing = models.ForeignKey(
+        "listings.Listing",
+        on_delete=models.CASCADE,
+        related_name="recommendation_logs",
+    )
+    source = models.CharField(
+        max_length=20,
+        choices=SOURCE_CHOICES,
+        db_index=True,
+    )
+    final_score = models.FloatField(
+        help_text=_("Hybrid fusion score at time of recommendation")
+    )
+    position = models.PositiveSmallIntegerField(
+        help_text=_("Rank position shown to the user, 1-indexed")
+    )
+    reason_text = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text=_("Human-readable reason string shown in the UI"),
+    )
+
+    # Outcome tracking — updated after the fact
+    was_clicked = models.BooleanField(default=False, db_index=True)
+    was_reserved = models.BooleanField(default=False, db_index=True)
+
+    class Meta:
+        verbose_name = _("recommendation log")
+        verbose_name_plural = _("recommendation logs")
+        indexes = [
+            models.Index(fields=["user", "created_at"]),
+            models.Index(fields=["listing", "was_reserved"]),
+            models.Index(fields=["source", "was_clicked"]),
+        ]
+        # Prevent double-logging the same listing in the same batch
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "listing", "created_at"],
+                name="unique_recommendation_log_per_batch",
+            )
+        ]
+
+    def __str__(self):
+        return (
+            f"Rec({self.user} | pos={self.position} | "
+            f"clicked={self.was_clicked} | reserved={self.was_reserved})"
+        )

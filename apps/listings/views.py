@@ -204,6 +204,57 @@ class ListingViewSet(viewsets.ModelViewSet):
             instance.save(update_fields=["status", "quantity_available"])
             logger.info("Listing soft-deleted (cancelled) due to existing orders", extra={"listing_id": str(instance.id)})
 
+    def retrieve(self, request, *args, **kwargs):
+        """
+        GET /listings/{id}/
+
+        Extends the default retrieve to:
+        1. Atomically increment view_count (race-condition safe via F())
+        2. Log a "view" UserInteraction for authenticated consumers
+           (used by the recommendation engine for implicit feedback)
+        """
+        instance = self.get_object()
+
+        # ── 1. Increment view counter (atomic, no race condition) ─────────────
+        try:
+            from django.db.models import F
+            Listing.objects.filter(pk=instance.pk).update(
+                view_count=F("view_count") + 1
+            )
+        except Exception as exc:
+            logger.warning(
+                "listings:retrieve view_count increment failed listing=%s: %s",
+                instance.pk, exc,
+            )
+
+        # ── 2. Log view interaction for authenticated consumers ───────────────
+        if request.user.is_authenticated and getattr(request.user, "is_consumer", False):
+            try:
+                from apps.recommendations.models import UserInteraction
+                from apps.recommendations.features import INTERACTION_SCORE_MAP
+                from django.utils import timezone as tz
+
+                now = tz.now()
+                UserInteraction.objects.get_or_create(
+                    user=request.user,
+                    listing=instance,
+                    type="view",
+                    defaults={
+                        "score": INTERACTION_SCORE_MAP["view"],
+                        "timestamp": now,
+                        "time_of_day": now.hour,
+                    },
+                )
+            except Exception as exc:
+                # Never let rec tracking break a listing detail call
+                logger.warning(
+                    "listings:retrieve view interaction failed listing=%s: %s",
+                    instance.pk, exc,
+                )
+
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+
     # ── Custom actions ────────────────────────────────────────────────────────
 
     @action(detail=False, methods=["get"], url_path="my-listings",

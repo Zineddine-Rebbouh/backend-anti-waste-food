@@ -204,8 +204,8 @@ class RoutePlanStopSerializer(serializers.Serializer):
 
     order = serializers.IntegerField()
     order_id = serializers.CharField()
-    merchant_name = serializers.CharField()
-    merchant_address = serializers.CharField()
+    merchant_name = serializers.CharField(allow_blank=True)
+    merchant_address = serializers.CharField(allow_blank=True)
     latitude = serializers.FloatField()
     longitude = serializers.FloatField()
     distance_from_previous_km = serializers.FloatField()

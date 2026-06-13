@@ -100,6 +100,20 @@ class Listing(TimeStampedModel):
     # ── Donation flag ─────────────────────────────────────────────────────────
     is_donation = models.BooleanField(default=False, db_index=True)
 
+    # ── Recommendation engine signals ─────────────────────────────────────────
+    view_count = models.PositiveIntegerField(
+        default=0,
+        help_text=_("Total views — incremented on listing detail requests"),
+    )
+    trending_score = models.FloatField(
+        default=0.0,
+        db_index=True,
+        help_text=_(
+            "Normalised 0–1 score updated every 30 minutes by Celery. "
+            "Reflects interaction velocity over the past 24 hours."
+        ),
+    )
+
     # ── Dietary info ──────────────────────────────────────────────────────────
     allergens = models.JSONField(
         default=list,

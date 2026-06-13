@@ -11,9 +11,22 @@ from .models import Donation, DonationRequest, ImpactReport
 
 class DonationListSerializer(serializers.ModelSerializer):
     listing_title = serializers.CharField(source="listing.title", read_only=True)
+    listing_description = serializers.CharField(source="listing.description", read_only=True, default="")
     listing_photo = serializers.SerializerMethodField()
+    listing_category = serializers.CharField(source="listing.category.slug", read_only=True, default="grocery")
+    listing_quantity = serializers.FloatField(source="listing.quantity_available", read_only=True, default=0)
+    listing_dietary_flags = serializers.JSONField(source="listing.dietary_flags", read_only=True, default=list)
+    listing_allergens = serializers.JSONField(source="listing.allergens", read_only=True, default=list)
+    listing_pickup_start = serializers.DateTimeField(source="listing.pickup_start", read_only=True)
+    listing_pickup_end = serializers.DateTimeField(source="listing.pickup_end", read_only=True)
     merchant_name = serializers.CharField(
         source="merchant.merchant_profile.business_name", read_only=True, default=""
+    )
+    merchant_address = serializers.CharField(
+        source="merchant.merchant_profile.address", read_only=True, default=""
+    )
+    merchant_wilaya = serializers.CharField(
+        source="merchant.merchant_profile.wilaya", read_only=True, default=""
     )
     requests_count = serializers.SerializerMethodField()
 
@@ -22,8 +35,17 @@ class DonationListSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "listing_title",
+            "listing_description",
             "listing_photo",
+            "listing_category",
+            "listing_quantity",
+            "listing_dietary_flags",
+            "listing_allergens",
+            "listing_pickup_start",
+            "listing_pickup_end",
             "merchant_name",
+            "merchant_address",
+            "merchant_wilaya",
             "status",
             "collection_start",
             "collection_end",

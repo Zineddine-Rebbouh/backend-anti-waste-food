@@ -14,6 +14,7 @@ from django.conf import settings
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
+from pgvector.django import VectorField
 from apps.core.models import TimeStampedModel
 
 
@@ -513,3 +514,26 @@ class AdminAssignment(TimeStampedModel):
 
     def __str__(self):
         return f"{self.action.upper()} by {self.admin.email} on {self.conversation_id}"
+
+
+class KnowledgeChunk(models.Model):
+    """
+    One focused unit of Tawfir platform knowledge.
+    Each row covers exactly one topic.
+    """
+    topic_id = models.CharField(max_length=80, unique=True)
+    content = models.TextField()
+
+    # The 768-number vector produced by Google's embedding model.
+    # This is what makes semantic search possible.
+    embedding = VectorField(dimensions=768)
+
+    # Controls which user types see this chunk during retrieval.
+    # Stored as ["consumer"], ["merchant"], ["charity"], or ["all"].
+    relevant_for = models.JSONField(default=list)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.topic_id

@@ -370,6 +370,7 @@ class OrderViewSet(viewsets.GenericViewSet):
                 for s in route_plan.stops
             ],
             "warnings": route_plan.warnings,
+            "path": route_plan.path,
         }
 
         response_serializer = RoutePlanResponseSerializer(data=response_data)
