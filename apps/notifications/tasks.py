@@ -107,3 +107,31 @@ def cleanup_old_notifications():
     ).delete()
     logger.info(f"cleanup_old_notifications: deleted {deleted_count} old notifications")
     return deleted_count
+
+
+@shared_task(
+    name="apps.notifications.tasks.send_push_notification",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=30,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+)
+def send_push_notification(self, notification_id: str):
+    """
+    Delivers a push notification via FCM to the recipient's mobile device.
+    Uses the FCMBackend stub — wire with real FCM credentials when available.
+    """
+    from .backends.fcm import FCMBackend
+    from .models import Notification
+
+    try:
+        notification = Notification.objects.select_related("recipient").get(
+            id=notification_id
+        )
+    except Notification.DoesNotExist:
+        logger.warning(f"send_push_notification: Notification {notification_id} not found")
+        return
+
+    backend = FCMBackend()
+    backend.send(notification)

@@ -45,6 +45,10 @@ app.conf.beat_schedule = {
         "task": "recommendations.rebuild_all_user_profiles",
         "schedule": 3600,  # every 60 minutes
     },
+    "check-subscription-statuses": {
+        "task": "apps.billing.tasks.check_subscription_statuses",
+        "schedule": crontab(hour=0, minute=1),  # Daily 12:01 AM
+    },
 }
 
 

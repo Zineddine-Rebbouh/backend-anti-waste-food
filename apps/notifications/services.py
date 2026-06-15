@@ -49,7 +49,7 @@ class NotificationService:
         Create notification records and enqueue delivery tasks for each channel.
         Respects the user's NotificationPreference settings.
         """
-        from .tasks import send_email_notification, send_sms_notification
+        from .tasks import send_email_notification, send_sms_notification, send_push_notification
 
         channels = channels or ["in_app"]
         data = data or {}
@@ -84,6 +84,8 @@ class NotificationService:
                 send_email_notification.delay(str(notification.id))
             elif channel == "sms":
                 send_sms_notification.delay(str(notification.id))
+            elif channel == "push":
+                send_push_notification.delay(str(notification.id))
             # in_app: no additional delivery step
 
         return notifications

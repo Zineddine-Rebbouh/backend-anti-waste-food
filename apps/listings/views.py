@@ -31,6 +31,7 @@ from apps.core.models import Wilaya
 from .filters import ListingFilter
 from .models import Category, Listing
 from .permissions import IsListingOwner
+from apps.billing.permissions import IsSubscriptionActive
 from .serializers import (
     CategorySerializer,
     ListingCreateSerializer,
@@ -172,7 +173,7 @@ class ListingViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action == "create":
-            return [permissions.IsAuthenticated(), IsVerifiedMerchant()]
+            return [permissions.IsAuthenticated(), IsVerifiedMerchant(), IsSubscriptionActive()]
         if self.action in ["update", "partial_update", "destroy"]:
             return [permissions.IsAuthenticated(), IsListingOwner()]
         if self.action in ["mark_as_donation", "unmark_as_donation"]:

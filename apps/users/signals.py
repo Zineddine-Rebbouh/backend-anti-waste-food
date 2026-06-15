@@ -24,7 +24,7 @@ def on_user_created(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender="users.Merchant")
 def on_merchant_verified(sender, instance, created, **kwargs):
-    """When a merchant is approved, send a notification."""
+    """When a merchant is approved, send a notification and create a trial subscription."""
     if not created and instance.verification_status == "approved":
         try:
             from apps.notifications.tasks import send_account_verified_notification
@@ -36,3 +36,15 @@ def on_merchant_verified(sender, instance, created, **kwargs):
                 instance.user_id,
                 exc,
             )
+
+        try:
+            from apps.billing.tasks import create_trial_subscription
+
+            create_trial_subscription.delay(str(instance.id))
+        except Exception as exc:
+            logger.warning(
+                "Failed to enqueue trial subscription creation for merchant %s: %s",
+                instance.id,
+                exc,
+            )
+

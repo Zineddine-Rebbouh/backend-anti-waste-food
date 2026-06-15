@@ -33,6 +33,39 @@ from apps.recommendations.models import (
 logger = logging.getLogger(__name__)
 
 
+# ── Sponsored listing cache helper ────────────────────────────────────────────
+
+def get_sponsored_listing_ids() -> set:
+    """
+    Returns the set of listing IDs (as strings) that are currently sponsored
+    and active. Backed by a Redis cache key with 15-minute TTL to avoid hitting
+    the DB on every recommendation request.
+    """
+    from apps.billing.constants import SPONSORED_CACHE_KEY, SPONSORED_CACHE_TTL
+
+    cached = cache.get(SPONSORED_CACHE_KEY)
+    if cached is not None:
+        return set(cached)
+
+    # Cache miss — query DB and repopulate
+    try:
+        from apps.billing.models import SponsoredListing
+        now = timezone.now()
+        ids = list(
+            SponsoredListing.objects.filter(
+                is_active=True,
+                expires_at__gt=now,
+            ).values_list("listing_id", flat=True)
+        )
+        # Store as list (JSON-serialisable); cast to str for UUID safety
+        str_ids = [str(i) for i in ids]
+        cache.set(SPONSORED_CACHE_KEY, str_ids, timeout=SPONSORED_CACHE_TTL)
+        return set(str_ids)
+    except Exception as exc:
+        logger.warning("rec:engine sponsored cache population failed: %s", exc)
+        return set()
+
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
 def get_active_config() -> RecommendationConfig:
@@ -315,6 +348,9 @@ def get_recommendations(
         except Exception as e:
             logger.warning("rec:engine collab scoring failed: %s", e)
 
+    # ── 3b. Sponsored listing IDs (Redis-backed, 15-min TTL) ─────────────────
+    sponsored_ids = get_sponsored_listing_ids()
+
     # ── 4. Score each candidate ───────────────────────────────────────────────
     scored = []
 
@@ -365,6 +401,14 @@ def get_recommendations(
             + cfg.weight_merchant * merchant_score
         ) * time_boost
 
+        # ── Sponsored boost ──────────────────────────────────────────────────
+        # Applied post-formula so organic scores are never fully overridden.
+        # Boost is additive; score is capped at SPONSORED_SCORE_CAP.
+        is_sponsored = str(lid) in sponsored_ids
+        if is_sponsored:
+            from apps.billing.constants import SPONSORED_SCORE_BOOST, SPONSORED_SCORE_CAP
+            final_score = min(final_score + SPONSORED_SCORE_BOOST, SPONSORED_SCORE_CAP)
+
         # Dominant source for reason string
         contributions = {
             "content": cfg.weight_content  * content_score,
@@ -373,20 +417,25 @@ def get_recommendations(
         }
         dominant = max(contributions, key=contributions.get)
 
-        reason = _generate_reason(
-            dominant,
-            dist_km if user_lat is not None else None,
-            urgency,
-            collab_score,
+        reason = (
+            "⭐ Featured listing"
+            if is_sponsored
+            else _generate_reason(
+                dominant,
+                dist_km if user_lat is not None else None,
+                urgency,
+                collab_score,
+            )
         )
 
         scored.append({
-            "listing":     listing,
-            "score":       round(final_score, 6),
-            "reason":      reason,
-            "source":      "geo" if is_cold_start else "hybrid",
-            "distance_km": round(dist_km, 2) if user_lat is not None else None,
-            "_listing_id": str(lid),
+            "listing":      listing,
+            "score":        round(final_score, 6),
+            "reason":       reason,
+            "source":       "sponsored" if is_sponsored else ("geo" if is_cold_start else "hybrid"),
+            "distance_km":  round(dist_km, 2) if user_lat is not None else None,
+            "_listing_id":  str(lid),
+            "is_sponsored": is_sponsored,
         })
 
     # ── 5. Sort and return top N ──────────────────────────────────────────────

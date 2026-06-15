@@ -72,6 +72,7 @@ LOCAL_APPS = [
     "apps.analytics",
     "apps.chat",
     "apps.recommendations",
+    "apps.billing",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -392,6 +393,19 @@ SERVER_EMAIL = env("SERVER_EMAIL", default="server@tawfir.dz")
 SMS_PROVIDER_NAME = env("SMS_PROVIDER_NAME", default="")
 SMS_PROVIDER_API_KEY = env("SMS_PROVIDER_API_KEY", default="")
 SMS_PROVIDER_SENDER = env("SMS_PROVIDER_SENDER", default="Tawfir")
+
+# ---------------------------------------------------------------------------
+# Firebase Cloud Messaging
+# ---------------------------------------------------------------------------
+FIREBASE_SERVICE_ACCOUNT_KEY = Path(
+    env(
+        "FIREBASE_SERVICE_ACCOUNT_KEY",
+        default=str(BASE_DIR / "firebase-service-account.json"),
+    )
+)
+FCM_ENABLED = FIREBASE_SERVICE_ACCOUNT_KEY.exists()
+FCM_ANDROID_CHANNEL_ID = env("FCM_ANDROID_CHANNEL_ID", default="tawfir_main")
+FCM_ANDROID_NOTIFICATION_COLOR = env("FCM_ANDROID_NOTIFICATION_COLOR", default="#2D8659")
 
 # ---------------------------------------------------------------------------
 # Frontend URL (for email links)

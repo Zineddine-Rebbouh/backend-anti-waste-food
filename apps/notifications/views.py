@@ -3,9 +3,18 @@ from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework.response import Response
+from rest_framework.views import APIView
 from apps.core.pagination import CustomCursorPagination
-from .models import Notification, NotificationPreference
-from .serializers import MarkReadSerializer, NotificationListSerializer, NotificationPreferenceSerializer, NotificationSerializer
+from .models import FCMDevice, Notification, NotificationPreference
+from .serializers import (
+    FCMDeviceRegisterSerializer,
+    FCMDeviceSerializer,
+    FCMDeviceUnregisterSerializer,
+    MarkReadSerializer,
+    NotificationListSerializer,
+    NotificationPreferenceSerializer,
+    NotificationSerializer,
+)
 from .services import NotificationService
 
 logger = logging.getLogger(__name__)
@@ -61,3 +70,50 @@ class NotificationPreferenceView(RetrieveUpdateAPIView):
     def get_object(self):
         obj, _ = NotificationPreference.objects.get_or_create(user=self.request.user)
         return obj
+
+
+class FCMDeviceRegisterView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = FCMDeviceRegisterSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        device, created = FCMDevice.objects.update_or_create(
+            user=request.user,
+            device_id=data["device_id"],
+            defaults={
+                "registration_id": data["registration_id"],
+                "device_type": data["device_type"],
+                "app_version": data.get("app_version", ""),
+                "is_active": True,
+            },
+        )
+
+        logger.info(
+            "Registered FCM device",
+            extra={
+                "user_id": str(request.user.id),
+                "device_id": device.device_id,
+                "token_tail": device.masked_token,
+                "created": created,
+            },
+        )
+        return Response(
+            FCMDeviceSerializer(device).data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
+class FCMDeviceUnregisterView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request):
+        serializer = FCMDeviceUnregisterSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        updated = FCMDevice.objects.filter(
+            user=request.user,
+            device_id=serializer.validated_data["device_id"],
+        ).update(is_active=False)
+        return Response({"unregistered": updated})
